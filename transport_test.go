@@ -106,15 +106,18 @@ var _ = Describe("Transport", func() {
 
 		clientInsecureConn, serverInsecureConn := connect()
 
+		done := make(chan struct{})
 		go func() {
 			defer GinkgoRecover()
 			_, err := serverTransport.SecureInbound(context.Background(), serverInsecureConn)
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("tls: bad certificate"))
+			close(done)
 		}()
 		// dial, but expect the wrong peer ID
 		_, err = clientTransport.SecureOutbound(context.Background(), clientInsecureConn, thirdPartyID)
 		Expect(err).To(MatchError("peer IDs don't match"))
+		Eventually(done).Should(BeClosed())
 	})
 
 	It("fails if the client presents an invalid cert chain", func() {
@@ -126,16 +129,19 @@ var _ = Describe("Transport", func() {
 
 		clientInsecureConn, serverInsecureConn := connect()
 
+		done := make(chan struct{})
 		go func() {
 			defer GinkgoRecover()
 			_, err := serverTransport.SecureInbound(context.Background(), serverInsecureConn)
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("crypto/rsa: verification error"))
+			close(done)
 		}()
 
 		_, err = clientTransport.SecureOutbound(context.Background(), clientInsecureConn, serverID)
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("tls: bad certificate"))
+		Eventually(done).Should(BeClosed())
 	})
 
 	It("fails if the server presents an invalid cert chain", func() {
@@ -147,15 +153,18 @@ var _ = Describe("Transport", func() {
 
 		clientInsecureConn, serverInsecureConn := connect()
 
+		done := make(chan struct{})
 		go func() {
 			defer GinkgoRecover()
 			_, err := serverTransport.SecureInbound(context.Background(), serverInsecureConn)
 			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("tls: bad certificate"))
+			// TLS returns a weird error here: "remote error: tls: unexpected message"
+			close(done)
 		}()
 
 		_, err = clientTransport.SecureOutbound(context.Background(), clientInsecureConn, serverID)
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("crypto/rsa: verification error"))
+		Eventually(done).Should(BeClosed())
 	})
 })
