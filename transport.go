@@ -1,0 +1,81 @@
+package libp2ptls
+
+import (
+	"context"
+	"crypto/tls"
+	"net"
+
+	cs "github.com/libp2p/go-conn-security"
+	ci "github.com/libp2p/go-libp2p-crypto"
+	peer "github.com/libp2p/go-libp2p-peer"
+)
+
+// ID is the protocol ID (used when negotiating with multistream)
+const ID = "/tls/1.0.0"
+
+// Transport constructs secure communication sessions for a peer.
+type Transport struct {
+	identity *Identity
+
+	localPeer peer.ID
+	privKey   ci.PrivKey
+}
+
+// New creates a TLS encrypted transport
+func New(key ci.PrivKey) (*Transport, error) {
+	id, err := peer.IDFromPrivateKey(key)
+	if err != nil {
+		return nil, err
+	}
+	identity, err := NewIdentity(key)
+	if err != nil {
+		return nil, err
+	}
+	return &Transport{
+		identity:  identity,
+		localPeer: id,
+		privKey:   key,
+	}, nil
+}
+
+var _ cs.Transport = &Transport{}
+
+// SecureInbound runs the TLS handshake as a server.
+func (t *Transport) SecureInbound(ctx context.Context, insecure net.Conn) (cs.Conn, error) {
+	serv := tls.Server(insecure, t.identity.Config)
+	// TODO: use the ctx
+	// see https://github.com/golang/go/issues/18482
+	if err := serv.Handshake(); err != nil {
+		return nil, err
+	}
+	return t.setupConn(serv)
+}
+
+// SecureOutbound runs the TLS handshake as a client.
+func (t *Transport) SecureOutbound(ctx context.Context, insecure net.Conn, p peer.ID) (cs.Conn, error) {
+	cl := tls.Client(insecure, t.identity.ConfigForPeer(p))
+	// TODO: use the ctx
+	// see https://github.com/golang/go/issues/18482
+	if err := cl.Handshake(); err != nil {
+		return nil, err
+	}
+	return t.setupConn(cl)
+}
+
+func (t *Transport) setupConn(tlsConn *tls.Conn) (cs.Conn, error) {
+	remotePubKey, err := KeyFromChain(tlsConn.ConnectionState().PeerCertificates)
+	if err != nil {
+		return nil, err
+	}
+	remotePeerID, err := peer.IDFromPublicKey(remotePubKey)
+	if err != nil {
+		return nil, err
+	}
+	return &conn{
+		Conn:         tlsConn,
+		localPeer:    t.localPeer,
+		privKey:      t.privKey,
+		remotePeer:   remotePeerID,
+		remotePubKey: remotePubKey,
+	}, nil
+}
