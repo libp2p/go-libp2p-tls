@@ -5,6 +5,8 @@
 [![](https://img.shields.io/badge/project-libp2p-yellow.svg?style=flat-square)](http://libp2p.io/)
 [![standard-readme compliant](https://img.shields.io/badge/standard--readme-OK-green.svg?style=flat-square)](https://github.com/RichardLitt/standard-readme)
 [![GoDoc](https://godoc.org/github.com/libp2p/go-libp2p-tls?status.svg)](https://godoc.org/github.com/libp2p/go-libp2p-tls)
+[![Linux Build Status](https://img.shields.io/travis/libp2p/go-libp2p-tls/master.svg?style=flat-square&label=linux+build)](https://travis-ci.org/libp2p/go-libp2p-tls)
+[![Code Coverage](https://img.shields.io/codecov/c/github/libp2p/go-libp2p-tls/master.svg?style=flat-square)](https://codecov.io/gh/libp2p/go-libp2p-tls/)
 
 > go-libp2p's TLS encrypted transport
 
