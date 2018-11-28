@@ -43,8 +43,20 @@ var _ cs.Transport = &Transport{}
 // SecureInbound runs the TLS handshake as a server.
 func (t *Transport) SecureInbound(ctx context.Context, insecure net.Conn) (cs.Conn, error) {
 	serv := tls.Server(insecure, t.identity.Config)
-	// TODO: use the ctx
-	// see https://github.com/golang/go/issues/18482
+
+	// There's no way to pass a context to tls.Conn.Handshake().
+	// See https://github.com/golang/go/issues/18482.
+	// Close the connection instead.
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		select {
+		case <-done:
+		case <-ctx.Done():
+			insecure.Close()
+		}
+	}()
+
 	if err := serv.Handshake(); err != nil {
 		return nil, err
 	}
@@ -54,8 +66,20 @@ func (t *Transport) SecureInbound(ctx context.Context, insecure net.Conn) (cs.Co
 // SecureOutbound runs the TLS handshake as a client.
 func (t *Transport) SecureOutbound(ctx context.Context, insecure net.Conn, p peer.ID) (cs.Conn, error) {
 	cl := tls.Client(insecure, t.identity.ConfigForPeer(p))
-	// TODO: use the ctx
-	// see https://github.com/golang/go/issues/18482
+
+	// There's no way to pass a context to tls.Conn.Handshake().
+	// See https://github.com/golang/go/issues/18482.
+	// Close the connection instead.
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		select {
+		case <-done:
+		case <-ctx.Done():
+			insecure.Close()
+		}
+	}()
+
 	if err := cl.Handshake(); err != nil {
 		return nil, err
 	}
