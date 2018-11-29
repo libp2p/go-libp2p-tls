@@ -59,7 +59,6 @@ func (t *Transport) handshake(
 	insecure net.Conn,
 	tlsConn *tls.Conn,
 ) (cs.Conn, error) {
-	errChan := make(chan error, 2)
 	// There's no way to pass a context to tls.Conn.Handshake().
 	// See https://github.com/golang/go/issues/18482.
 	// Close the connection instead.
@@ -69,21 +68,24 @@ func (t *Transport) handshake(
 		select {
 		case <-done:
 		case <-ctx.Done():
-			errChan <- ctx.Err()
 			insecure.Close()
 		}
 	}()
 
 	if err := tlsConn.Handshake(); err != nil {
 		// if the context was canceled, return the context error
-		errChan <- err
-		return nil, <-errChan
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
+		return nil, err
 	}
 	conn, err := t.setupConn(tlsConn)
 	if err != nil {
 		// if the context was canceled, return the context error
-		errChan <- err
-		return nil, <-errChan
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
+		return nil, err
 	}
 	return conn, nil
 }
