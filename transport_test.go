@@ -112,8 +112,7 @@ var _ = Describe("Transport", func() {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 		_, err = clientTransport.SecureOutbound(ctx, clientInsecureConn, serverID)
-		Expect(err).To(HaveOccurred())
-		Expect(err.Error()).To(ContainSubstring("use of closed network connection"))
+		Expect(err).To(MatchError(context.Canceled))
 	})
 
 	It("fails when the context of the incoming connection is canceled", func() {
@@ -129,8 +128,7 @@ var _ = Describe("Transport", func() {
 			ctx, cancel := context.WithCancel(context.Background())
 			cancel()
 			_, err := serverTransport.SecureInbound(ctx, serverInsecureConn)
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("use of closed network connection"))
+			Expect(err).To(MatchError(context.Canceled))
 		}()
 		_, err = clientTransport.SecureOutbound(context.Background(), clientInsecureConn, serverID)
 		Expect(err).To(HaveOccurred())
