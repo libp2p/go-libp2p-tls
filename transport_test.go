@@ -96,6 +96,44 @@ var _ = Describe("Transport", func() {
 		Expect(string(b)).To(Equal("foobar"))
 	})
 
+	It("fails when the context of the outgoing connection is canceled", func() {
+		clientTransport, err := New(clientKey)
+		Expect(err).ToNot(HaveOccurred())
+		serverTransport, err := New(serverKey)
+		Expect(err).ToNot(HaveOccurred())
+
+		clientInsecureConn, serverInsecureConn := connect()
+
+		go func() {
+			defer GinkgoRecover()
+			_, err := serverTransport.SecureInbound(context.Background(), serverInsecureConn)
+			Expect(err).To(HaveOccurred())
+		}()
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		_, err = clientTransport.SecureOutbound(ctx, clientInsecureConn, serverID)
+		Expect(err).To(MatchError(context.Canceled))
+	})
+
+	It("fails when the context of the incoming connection is canceled", func() {
+		clientTransport, err := New(clientKey)
+		Expect(err).ToNot(HaveOccurred())
+		serverTransport, err := New(serverKey)
+		Expect(err).ToNot(HaveOccurred())
+
+		clientInsecureConn, serverInsecureConn := connect()
+
+		go func() {
+			defer GinkgoRecover()
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			_, err := serverTransport.SecureInbound(ctx, serverInsecureConn)
+			Expect(err).To(MatchError(context.Canceled))
+		}()
+		_, err = clientTransport.SecureOutbound(context.Background(), clientInsecureConn, serverID)
+		Expect(err).To(HaveOccurred())
+	})
+
 	It("fails if the peer ID doesn't match", func() {
 		thirdPartyID, _ := createPeer()
 
