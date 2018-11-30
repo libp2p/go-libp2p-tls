@@ -1,5 +1,5 @@
 {
-  "author": "marten",
+  "author": "marten-seemann",
   "bugs": {
     "url": "github.com/libp2p/go-libp2p-tls"
   },
@@ -19,6 +19,6 @@
   "license": "",
   "name": "go-libp2p-tls",
   "releaseCmd": "git commit -a -m \"gx publish $VERSION\"",
-  "version": "0.0.0"
+  "version": "0.1.0"
 }
 
