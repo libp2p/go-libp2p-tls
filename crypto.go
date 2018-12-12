@@ -11,7 +11,7 @@ import (
 	"github.com/gogo/protobuf/proto"
 	ic "github.com/libp2p/go-libp2p-crypto"
 	pb "github.com/libp2p/go-libp2p-crypto/pb"
-	"github.com/libp2p/go-libp2p-peer"
+	peer "github.com/libp2p/go-libp2p-peer"
 )
 
 const PEER_HOSTNAME = "tls.libp2p"
@@ -32,7 +32,12 @@ func NewIdentity(privKey ic.PrivKey) (*Identity, error) {
 
 // ConfigForPeer creates a new tls.Config that verifies the peers certificate chain.
 // It should be used to create a new tls.Config before dialing.
-func (i *Identity) ConfigForPeer(remote peer.ID) *tls.Config {
+// It also returns a pointer to the remote public key which points to the valid remote public
+// key after the remote connects
+func (i *Identity) ConfigForPeer(remote peer.ID) (*tls.Config, *ic.PubKey) {
+
+	var remotePubKey ic.PubKey = nil
+
 	// We need to check the peer ID in the VerifyPeerCertificate callback.
 	// The tls.Config it is also used for listening, and we might also have concurrent dials.
 	// Clone it so we can check for the specific peer ID we're dialing here.
@@ -55,12 +60,15 @@ func (i *Identity) ConfigForPeer(remote peer.ID) *tls.Config {
 		if !remote.MatchesPublicKey(pubKey) {
 			return errors.New("peer IDs don't match")
 		}
+
+		remotePubKey = pubKey
+
 		return nil
 	}
 
 	conf.ServerName = PEER_HOSTNAME
 
-	return conf
+	return conf, &remotePubKey
 }
 
 // KeyFromChain takes a chain of x509.Certificates and returns the peer's public key.

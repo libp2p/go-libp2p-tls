@@ -48,7 +48,8 @@ func (t *Transport) SecureInbound(ctx context.Context, insecure net.Conn) (cs.Co
 
 // SecureOutbound runs the TLS handshake as a client.
 func (t *Transport) SecureOutbound(ctx context.Context, insecure net.Conn, p peer.ID) (cs.Conn, error) {
-	cl := tls.Client(insecure, t.identity.ConfigForPeer(p))
+	config, _ := t.identity.ConfigForPeer(p)
+	cl := tls.Client(insecure, config)
 	return t.handshake(ctx, insecure, cl)
 }
 
