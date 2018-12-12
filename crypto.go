@@ -11,8 +11,10 @@ import (
 	"github.com/gogo/protobuf/proto"
 	ic "github.com/libp2p/go-libp2p-crypto"
 	pb "github.com/libp2p/go-libp2p-crypto/pb"
-	peer "github.com/libp2p/go-libp2p-peer"
+	"github.com/libp2p/go-libp2p-peer"
 )
+
+const PEER_HOSTNAME = "tls.libp2p"
 
 // Identity is used to secure connections
 type Identity struct {
@@ -55,6 +57,9 @@ func (i *Identity) ConfigForPeer(remote peer.ID) *tls.Config {
 		}
 		return nil
 	}
+
+	conf.ServerName = PEER_HOSTNAME
+
 	return conf
 }
 
@@ -102,6 +107,7 @@ func keyToCertificate(sk ic.PrivKey) (interface{}, *x509.Certificate, error) {
 		return nil, nil, err
 	}
 	tmpl := &x509.Certificate{
+		DNSNames:     []string{PEER_HOSTNAME},
 		SerialNumber: sn,
 		NotBefore:    time.Now().Add(-24 * time.Hour),
 		NotAfter:     time.Now().Add(certValidityPeriod),
