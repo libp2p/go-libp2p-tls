@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
+	"fmt"
 	"math/big"
 	"time"
 
@@ -93,7 +94,14 @@ func getRemotePubKey(chain []*x509.Certificate) (ic.PubKey, error) {
 	if err != nil {
 		return nil, err
 	}
-	return ic.UnmarshalRsaPublicKey(remotePubKey)
+	switch chain[0].PublicKeyAlgorithm {
+	case x509.RSA:
+		return ic.UnmarshalRsaPublicKey(remotePubKey)
+	case x509.ECDSA:
+		return ic.UnmarshalECDSAPublicKey(remotePubKey)
+	default:
+		return nil, fmt.Errorf("unexpected public key algorithm: %d", chain[0].PublicKeyAlgorithm)
+	}
 }
 
 func keyToCertificate(sk ic.PrivKey) (interface{}, *x509.Certificate, error) {
@@ -124,7 +132,14 @@ func keyToCertificate(sk ic.PrivKey) (interface{}, *x509.Certificate, error) {
 		}
 		publicKey = &k.PublicKey
 		privateKey = k
-	// TODO: add support for ECDSA
+	case pb.KeyType_ECDSA:
+		k, err := x509.ParseECPrivateKey(pbmes.GetData())
+		if err != nil {
+			return nil, nil, err
+		}
+		publicKey = &k.PublicKey
+		privateKey = k
+	// TODO: add support for Ed25519
 	default:
 		return nil, nil, errors.New("unsupported key type for TLS")
 	}
