@@ -2,9 +2,12 @@ package libp2ptls
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
-	"crypto/x509"
+	"fmt"
+	mrand "math/rand"
 	"net"
 
 	cs "github.com/libp2p/go-conn-security"
@@ -21,10 +24,18 @@ var _ = Describe("Transport", func() {
 	)
 
 	createPeer := func() (peer.ID, ic.PrivKey) {
-		key, err := rsa.GenerateKey(rand.Reader, 1024)
-		Expect(err).ToNot(HaveOccurred())
-		priv, err := ic.UnmarshalRsaPrivateKey(x509.MarshalPKCS1PrivateKey(key))
-		Expect(err).ToNot(HaveOccurred())
+		var priv ic.PrivKey
+		if mrand.Int()%2 == 0 {
+			fmt.Fprintln(GinkgoWriter, " using an ECDSA key")
+			var err error
+			priv, _, err = ic.GenerateECDSAKeyPair(rand.Reader)
+			Expect(err).ToNot(HaveOccurred())
+		} else {
+			fmt.Fprintln(GinkgoWriter, " using an RSA key")
+			var err error
+			priv, _, err = ic.GenerateRSAKeyPair(1024, rand.Reader)
+			Expect(err).ToNot(HaveOccurred())
+		}
 		id, err := peer.IDFromPrivateKey(priv)
 		Expect(err).ToNot(HaveOccurred())
 		return id, priv
@@ -48,13 +59,24 @@ var _ = Describe("Transport", func() {
 
 	// modify the cert chain such that verificiation will fail
 	invalidateCertChain := func(identity *Identity) {
-		key, err := rsa.GenerateKey(rand.Reader, 1024)
-		Expect(err).ToNot(HaveOccurred())
-		identity.Config.Certificates[0].PrivateKey = key
+		switch identity.Config.Certificates[0].PrivateKey.(type) {
+		case *rsa.PrivateKey:
+			key, err := rsa.GenerateKey(rand.Reader, 1024)
+			Expect(err).ToNot(HaveOccurred())
+			identity.Config.Certificates[0].PrivateKey = key
+		case *ecdsa.PrivateKey:
+			key, err := ecdsa.GenerateKey(elliptic.P224(), rand.Reader)
+			Expect(err).ToNot(HaveOccurred())
+			identity.Config.Certificates[0].PrivateKey = key
+		default:
+			Fail("unexpected private key type")
+		}
 	}
 
 	BeforeEach(func() {
+		fmt.Fprintf(GinkgoWriter, "Initializing a server")
 		serverID, serverKey = createPeer()
+		fmt.Fprintf(GinkgoWriter, "Initializing a client")
 		clientID, clientKey = createPeer()
 	})
 
@@ -135,6 +157,7 @@ var _ = Describe("Transport", func() {
 	})
 
 	It("fails if the peer ID doesn't match", func() {
+		fmt.Fprintf(GinkgoWriter, "Creating another peer")
 		thirdPartyID, _ := createPeer()
 
 		serverTransport, err := New(serverKey)
@@ -172,7 +195,10 @@ var _ = Describe("Transport", func() {
 			defer GinkgoRecover()
 			_, err := serverTransport.SecureInbound(context.Background(), serverInsecureConn)
 			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("crypto/rsa: verification error"))
+			Expect(err.Error()).To(Or(
+				ContainSubstring("crypto/rsa: verification error"),
+				ContainSubstring("ECDSA verification failure"),
+			))
 			close(done)
 		}()
 
@@ -202,7 +228,10 @@ var _ = Describe("Transport", func() {
 
 		_, err = clientTransport.SecureOutbound(context.Background(), clientInsecureConn, serverID)
 		Expect(err).To(HaveOccurred())
-		Expect(err.Error()).To(ContainSubstring("crypto/rsa: verification error"))
+		Expect(err.Error()).To(Or(
+			ContainSubstring("crypto/rsa: verification error"),
+			ContainSubstring("ECDSA verification failure"),
+		))
 		Eventually(done).Should(BeClosed())
 	})
 })
