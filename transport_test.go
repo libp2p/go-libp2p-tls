@@ -26,18 +26,19 @@ var _ = Describe("Transport", func() {
 	createPeer := func() (peer.ID, ic.PrivKey) {
 		var priv ic.PrivKey
 		if mrand.Int()%2 == 0 {
-			fmt.Fprintln(GinkgoWriter, " using an ECDSA key")
+			fmt.Fprintf(GinkgoWriter, " using an ECDSA key: ")
 			var err error
 			priv, _, err = ic.GenerateECDSAKeyPair(rand.Reader)
 			Expect(err).ToNot(HaveOccurred())
 		} else {
-			fmt.Fprintln(GinkgoWriter, " using an RSA key")
+			fmt.Fprintf(GinkgoWriter, " using an RSA key: ")
 			var err error
 			priv, _, err = ic.GenerateRSAKeyPair(1024, rand.Reader)
 			Expect(err).ToNot(HaveOccurred())
 		}
 		id, err := peer.IDFromPrivateKey(priv)
 		Expect(err).ToNot(HaveOccurred())
+		fmt.Fprintln(GinkgoWriter, id.Pretty())
 		return id, priv
 	}
 
