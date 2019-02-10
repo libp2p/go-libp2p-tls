@@ -4,11 +4,18 @@ import (
 	"context"
 	"crypto/tls"
 	"net"
+	"os"
 
 	cs "github.com/libp2p/go-conn-security"
 	ci "github.com/libp2p/go-libp2p-crypto"
 	peer "github.com/libp2p/go-libp2p-peer"
 )
+
+// TLS 1.3 is opt-in in Go 1.12
+// Activate it by setting the tls13 GODEBUG flag.
+func init() {
+	os.Setenv("GODEBUG", os.Getenv("GODEBUG")+",tls13=1")
+}
 
 // ID is the protocol ID (used when negotiating with multistream)
 const ID = "/tls/1.0.0"
@@ -47,6 +54,12 @@ func (t *Transport) SecureInbound(ctx context.Context, insecure net.Conn) (cs.Co
 }
 
 // SecureOutbound runs the TLS handshake as a client.
+// Note that SecureOutbound will not return an error if the server doesn't
+// accept the certificate. This is due to the fact that in TLS 1.3, the client
+// sends its certificate and the ClientFinished in the same flight, and can send
+// application data immediately afterwards.
+// If the handshake fails, the server will close the connection. The client will
+// notice this after 1 RTT when calling Read.
 func (t *Transport) SecureOutbound(ctx context.Context, insecure net.Conn, p peer.ID) (cs.Conn, error) {
 	cl := tls.Client(insecure, t.identity.ConfigForPeer(p))
 	return t.handshake(ctx, cl)
