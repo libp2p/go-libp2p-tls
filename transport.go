@@ -43,21 +43,16 @@ var _ cs.Transport = &Transport{}
 // SecureInbound runs the TLS handshake as a server.
 func (t *Transport) SecureInbound(ctx context.Context, insecure net.Conn) (cs.Conn, error) {
 	serv := tls.Server(insecure, t.identity.Config)
-	return t.handshake(ctx, insecure, serv)
+	return t.handshake(ctx, serv)
 }
 
 // SecureOutbound runs the TLS handshake as a client.
 func (t *Transport) SecureOutbound(ctx context.Context, insecure net.Conn, p peer.ID) (cs.Conn, error) {
 	cl := tls.Client(insecure, t.identity.ConfigForPeer(p))
-	return t.handshake(ctx, insecure, cl)
+	return t.handshake(ctx, cl)
 }
 
-func (t *Transport) handshake(
-	ctx context.Context,
-	// in Go 1.10, we need to close the underlying net.Conn
-	// in Go 1.11 this was fixed, and tls.Conn.Close() works as well
-	insecure net.Conn,
-	tlsConn *tls.Conn,
+func (t *Transport) handshake(ctx context.Context, tlsConn *tls.Conn,
 ) (cs.Conn, error) {
 	// There's no way to pass a context to tls.Conn.Handshake().
 	// See https://github.com/golang/go/issues/18482.
@@ -68,7 +63,7 @@ func (t *Transport) handshake(
 		select {
 		case <-done:
 		case <-ctx.Done():
-			insecure.Close()
+			tlsConn.Close()
 		}
 	}()
 
