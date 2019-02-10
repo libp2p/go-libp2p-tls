@@ -57,6 +57,11 @@ func (t *Transport) handshake(ctx context.Context, tlsConn *tls.Conn,
 	// There's no way to pass a context to tls.Conn.Handshake().
 	// See https://github.com/golang/go/issues/18482.
 	// Close the connection instead.
+	select {
+	case <-ctx.Done():
+		tlsConn.Close()
+	default:
+	}
 	done := make(chan struct{})
 	defer close(done)
 	go func() {
