@@ -1,6 +1,7 @@
 package libp2ptls
 
 import (
+	"crypto"
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
@@ -104,7 +105,7 @@ func getRemotePubKey(chain []*x509.Certificate) (ic.PubKey, error) {
 	}
 }
 
-func keyToCertificate(sk ic.PrivKey) (interface{}, *x509.Certificate, error) {
+func keyToCertificate(sk ic.PrivKey) (crypto.PrivateKey, *x509.Certificate, error) {
 	sn, err := rand.Int(rand.Reader, big.NewInt(1<<62))
 	if err != nil {
 		return nil, nil, err
@@ -115,7 +116,8 @@ func keyToCertificate(sk ic.PrivKey) (interface{}, *x509.Certificate, error) {
 		NotAfter:     time.Now().Add(certValidityPeriod),
 	}
 
-	var publicKey, privateKey interface{}
+	var privateKey crypto.PrivateKey
+	var publicKey crypto.PublicKey
 	keyBytes, err := sk.Bytes()
 	if err != nil {
 		return nil, nil, err
