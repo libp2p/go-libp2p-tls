@@ -26,18 +26,19 @@ var _ = Describe("Transport", func() {
 	createPeer := func() (peer.ID, ic.PrivKey) {
 		var priv ic.PrivKey
 		if mrand.Int()%2 == 0 {
-			fmt.Fprintln(GinkgoWriter, " using an ECDSA key")
+			fmt.Fprintf(GinkgoWriter, " using an ECDSA key: ")
 			var err error
 			priv, _, err = ic.GenerateECDSAKeyPair(rand.Reader)
 			Expect(err).ToNot(HaveOccurred())
 		} else {
-			fmt.Fprintln(GinkgoWriter, " using an RSA key")
+			fmt.Fprintf(GinkgoWriter, " using an RSA key: ")
 			var err error
 			priv, _, err = ic.GenerateRSAKeyPair(1024, rand.Reader)
 			Expect(err).ToNot(HaveOccurred())
 		}
 		id, err := peer.IDFromPrivateKey(priv)
 		Expect(err).ToNot(HaveOccurred())
+		fmt.Fprintln(GinkgoWriter, id.Pretty())
 		return id, priv
 	}
 
@@ -65,7 +66,7 @@ var _ = Describe("Transport", func() {
 			Expect(err).ToNot(HaveOccurred())
 			identity.Config.Certificates[0].PrivateKey = key
 		case *ecdsa.PrivateKey:
-			key, err := ecdsa.GenerateKey(elliptic.P224(), rand.Reader)
+			key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 			Expect(err).ToNot(HaveOccurred())
 			identity.Config.Certificates[0].PrivateKey = key
 		default:
@@ -194,17 +195,14 @@ var _ = Describe("Transport", func() {
 		go func() {
 			defer GinkgoRecover()
 			_, err := serverTransport.SecureInbound(context.Background(), serverInsecureConn)
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(Or(
-				ContainSubstring("crypto/rsa: verification error"),
-				ContainSubstring("ECDSA verification failure"),
-			))
+			Expect(err).To(MatchError("tls: invalid certificate signature"))
 			close(done)
 		}()
 
-		_, err = clientTransport.SecureOutbound(context.Background(), clientInsecureConn, serverID)
-		Expect(err).To(HaveOccurred())
-		Expect(err.Error()).To(ContainSubstring("tls: bad certificate"))
+		conn, err := clientTransport.SecureOutbound(context.Background(), clientInsecureConn, serverID)
+		Expect(err).ToNot(HaveOccurred())
+		_, err = conn.Read([]byte{0})
+		Expect(err).To(MatchError("remote error: tls: error decrypting message"))
 		Eventually(done).Should(BeClosed())
 	})
 
@@ -222,16 +220,12 @@ var _ = Describe("Transport", func() {
 			defer GinkgoRecover()
 			_, err := serverTransport.SecureInbound(context.Background(), serverInsecureConn)
 			Expect(err).To(HaveOccurred())
-			// TLS returns a weird error here: "remote error: tls: unexpected message"
+			Expect(err.Error()).To(ContainSubstring("remote error: tls:"))
 			close(done)
 		}()
 
 		_, err = clientTransport.SecureOutbound(context.Background(), clientInsecureConn, serverID)
-		Expect(err).To(HaveOccurred())
-		Expect(err.Error()).To(Or(
-			ContainSubstring("crypto/rsa: verification error"),
-			ContainSubstring("ECDSA verification failure"),
-		))
+		Expect(err).To(MatchError("tls: invalid certificate signature"))
 		Eventually(done).Should(BeClosed())
 	})
 })

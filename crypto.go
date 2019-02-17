@@ -72,6 +72,7 @@ func generateConfig(privKey ic.PrivKey) (*tls.Config, error) {
 		return nil, err
 	}
 	return &tls.Config{
+		MinVersion:         tls.VersionTLS13,
 		InsecureSkipVerify: true, // This is not insecure here. We will verify the cert chain ourselves.
 		ClientAuth:         tls.RequireAnyClientCert,
 		Certificates: []tls.Certificate{{
