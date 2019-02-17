@@ -10,7 +10,6 @@ import (
 	"math/big"
 	"time"
 
-	"github.com/gogo/protobuf/proto"
 	ic "github.com/libp2p/go-libp2p-crypto"
 	pb "github.com/libp2p/go-libp2p-crypto/pb"
 	peer "github.com/libp2p/go-libp2p-peer"
@@ -118,24 +117,20 @@ func keyToCertificate(sk ic.PrivKey) (crypto.PrivateKey, *x509.Certificate, erro
 
 	var privateKey crypto.PrivateKey
 	var publicKey crypto.PublicKey
-	keyBytes, err := sk.Bytes()
+	raw, err := sk.Raw()
 	if err != nil {
 		return nil, nil, err
 	}
-	pbmes := new(pb.PrivateKey)
-	if err := proto.Unmarshal(keyBytes, pbmes); err != nil {
-		return nil, nil, err
-	}
-	switch pbmes.GetType() {
+	switch sk.Type() {
 	case pb.KeyType_RSA:
-		k, err := x509.ParsePKCS1PrivateKey(pbmes.GetData())
+		k, err := x509.ParsePKCS1PrivateKey(raw)
 		if err != nil {
 			return nil, nil, err
 		}
 		publicKey = &k.PublicKey
 		privateKey = k
 	case pb.KeyType_ECDSA:
-		k, err := x509.ParseECPrivateKey(pbmes.GetData())
+		k, err := x509.ParseECPrivateKey(raw)
 		if err != nil {
 			return nil, nil, err
 		}
