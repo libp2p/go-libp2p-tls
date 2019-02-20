@@ -1,21 +1,31 @@
 package libp2ptls
 
 import (
-	"crypto"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/asn1"
 	"errors"
 	"fmt"
 	"math/big"
 	"time"
 
+	crypto "github.com/libp2p/go-libp2p-crypto"
 	ic "github.com/libp2p/go-libp2p-crypto"
-	pb "github.com/libp2p/go-libp2p-crypto/pb"
 	peer "github.com/libp2p/go-libp2p-peer"
 )
 
-const certValidityPeriod = 180 * 24 * time.Hour
+const certValidityPeriod = 100 * 365 * 24 * time.Hour // ~100 years
+
+var extensionID = getPrefixedExtensionID([]int{1, 1})
+
+type signedKey struct {
+	PubKey    []byte
+	Signature []byte
+}
 
 // Identity is used to secure connections
 type Identity struct {
@@ -24,7 +34,7 @@ type Identity struct {
 
 // NewIdentity creates a new identity
 func NewIdentity(privKey ic.PrivKey) (*Identity, error) {
-	key, cert, err := keyToCertificate(privKey)
+	cert, err := keyToCertificate(privKey)
 	if err != nil {
 		return nil, err
 	}
@@ -33,10 +43,7 @@ func NewIdentity(privKey ic.PrivKey) (*Identity, error) {
 			MinVersion:         tls.VersionTLS13,
 			InsecureSkipVerify: true, // This is not insecure here. We will verify the cert chain ourselves.
 			ClientAuth:         tls.RequireAnyClientCert,
-			Certificates: []tls.Certificate{{
-				Certificate: [][]byte{cert.Raw},
-				PrivateKey:  key,
-			}},
+			Certificates:       []tls.Certificate{*cert},
 			VerifyPeerCertificate: func(_ [][]byte, _ [][]*x509.Certificate) error {
 				panic("tls config not specialized for peer")
 			},
@@ -95,70 +102,95 @@ func getRemotePubKey(chain []*x509.Certificate) (ic.PubKey, error) {
 	if len(chain) != 1 {
 		return nil, errors.New("expected one certificates in the chain")
 	}
+	cert := chain[0]
 	pool := x509.NewCertPool()
-	pool.AddCert(chain[0])
-	if _, err := chain[0].Verify(x509.VerifyOptions{Roots: pool}); err != nil {
+	pool.AddCert(cert)
+	if _, err := cert.Verify(x509.VerifyOptions{Roots: pool}); err != nil {
 		// If we return an x509 error here, it will be sent on the wire.
 		// Wrap the error to avoid that.
 		return nil, fmt.Errorf("certificate verification failed: %s", err)
 	}
-	remotePubKey, err := x509.MarshalPKIXPublicKey(chain[0].PublicKey)
+
+	var found bool
+	var keyExt pkix.Extension
+	// find the libp2p key extension, skipping all unknown extensions
+	for _, ext := range cert.Extensions {
+		if extensionIDEqual(ext.Id, extensionID) {
+			keyExt = ext
+			found = true
+			break
+		}
+	}
+	if !found {
+		return nil, errors.New("expected certificate to contain the key extension")
+	}
+	var sk signedKey
+	if _, err := asn1.Unmarshal(keyExt.Value, &sk); err != nil {
+		return nil, fmt.Errorf("unmarshalling signed certificate failed: %s", err)
+	}
+	pubKey, err := crypto.UnmarshalPublicKey(sk.PubKey)
+	if err != nil {
+		return nil, fmt.Errorf("unmarshalling public key failed: %s", err)
+	}
+	certKeyPub, err := x509.MarshalPKIXPublicKey(cert.PublicKey)
 	if err != nil {
 		return nil, err
 	}
-	switch chain[0].PublicKeyAlgorithm {
-	case x509.RSA:
-		return ic.UnmarshalRsaPublicKey(remotePubKey)
-	case x509.ECDSA:
-		return ic.UnmarshalECDSAPublicKey(remotePubKey)
-	default:
-		return nil, fmt.Errorf("unexpected public key algorithm: %d", chain[0].PublicKeyAlgorithm)
+	valid, err := pubKey.Verify(certKeyPub, sk.Signature)
+	if err != nil {
+		return nil, fmt.Errorf("signature verification failed: %s", err)
 	}
+	if !valid {
+		return nil, errors.New("signature invalid")
+	}
+	return pubKey, nil
 }
 
-func keyToCertificate(sk ic.PrivKey) (crypto.PrivateKey, *x509.Certificate, error) {
+func keyToCertificate(sk ic.PrivKey) (*tls.Certificate, error) {
+	certKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return nil, err
+	}
+
+	keyBytes, err := crypto.MarshalPublicKey(sk.GetPublic())
+	if err != nil {
+		return nil, err
+	}
+	certKeyPub, err := x509.MarshalPKIXPublicKey(certKey.Public())
+	if err != nil {
+		return nil, err
+	}
+	signature, err := sk.Sign(certKeyPub)
+	if err != nil {
+		return nil, err
+	}
+	value, err := asn1.Marshal(signedKey{
+		PubKey:    keyBytes,
+		Signature: signature,
+	})
+	if err != nil {
+		return nil, err
+	}
+
 	sn, err := rand.Int(rand.Reader, big.NewInt(1<<62))
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	tmpl := &x509.Certificate{
 		SerialNumber: sn,
-		NotBefore:    time.Now().Add(-24 * time.Hour),
+		NotBefore:    time.Time{},
 		NotAfter:     time.Now().Add(certValidityPeriod),
+		// after calling CreateCertificate, these will end up in Certificate.Extensions
+		ExtraExtensions: []pkix.Extension{
+			{Id: extensionID, Value: value},
+		},
 	}
-
-	var privateKey crypto.PrivateKey
-	var publicKey crypto.PublicKey
-	raw, err := sk.Raw()
+	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, certKey.Public(), certKey)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	switch sk.Type() {
-	case pb.KeyType_RSA:
-		k, err := x509.ParsePKCS1PrivateKey(raw)
-		if err != nil {
-			return nil, nil, err
-		}
-		publicKey = &k.PublicKey
-		privateKey = k
-	case pb.KeyType_ECDSA:
-		k, err := x509.ParseECPrivateKey(raw)
-		if err != nil {
-			return nil, nil, err
-		}
-		publicKey = &k.PublicKey
-		privateKey = k
-	// TODO: add support for Ed25519
-	default:
-		return nil, nil, errors.New("unsupported key type for TLS")
-	}
-	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, publicKey, privateKey)
-	if err != nil {
-		return nil, nil, err
-	}
-	cert, err := x509.ParseCertificate(certDER)
-	if err != nil {
-		return nil, nil, err
-	}
-	return privateKey, cert, nil
+	return &tls.Certificate{
+		Certificate: [][]byte{certDER},
+		PrivateKey:  certKey,
+	}, nil
 }
