@@ -1,47 +1,22 @@
-package main
+package cmdimpl
 
 import (
 	"context"
-	"crypto/rand"
 	"flag"
 	"fmt"
 	"net"
 	"time"
 
-	ic "github.com/libp2p/go-libp2p-crypto"
 	peer "github.com/libp2p/go-libp2p-peer"
 	libp2ptls "github.com/libp2p/go-libp2p-tls"
 )
 
-func main() {
-	if err := startServer(); err != nil {
-		panic(err)
-	}
-}
-
-func startServer() error {
+func StartServer() error {
 	port := flag.Int("p", 5533, "port")
 	keyType := flag.String("key", "ecdsa", "rsa, ecdsa, ed25519 or secp256k1")
 	flag.Parse()
 
-	var priv ic.PrivKey
-	var err error
-	switch *keyType {
-	case "rsa":
-		fmt.Printf("Generated new peer with an RSA key.")
-		priv, _, err = ic.GenerateRSAKeyPair(2048, rand.Reader)
-	case "ecdsa":
-		fmt.Printf("Generated new peer with an ECDSA key.")
-		priv, _, err = ic.GenerateECDSAKeyPair(rand.Reader)
-	case "ed25519":
-		fmt.Printf("Generated new peer with an Ed25519 key.")
-		priv, _, err = ic.GenerateEd25519Key(rand.Reader)
-	case "secp256k1":
-		fmt.Printf("Generated new peer with an Secp256k1 key.")
-		priv, _, err = ic.GenerateSecp256k1Key(rand.Reader)
-	default:
-		return fmt.Errorf("unknown key type: %s", *keyType)
-	}
+	priv, err := generateKey(*keyType)
 	if err != nil {
 		return err
 	}
@@ -62,7 +37,7 @@ func startServer() error {
 	}
 	fmt.Printf("Listening for new connections on %s\n", ln.Addr())
 	fmt.Printf("Now run the following command in a separate terminal:\n")
-	fmt.Printf("\tgo run example/client/main.go -p %d -id %s\n", *port, id.Pretty())
+	fmt.Printf("\tgo run cmd/tlsdiag.go client -p %d -id %s\n", *port, id.Pretty())
 
 	for {
 		conn, err := ln.Accept()

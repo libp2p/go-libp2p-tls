@@ -2,5 +2,5 @@
 
 Run
 ```bash
-go run example/server/main.go
+go run cmd/tlsdiag.go server
 ```
