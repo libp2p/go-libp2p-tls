@@ -69,7 +69,10 @@ func NewIdentity(
 
 // ConfigForPeer creates a new tls.Config that verifies the peers certificate chain.
 // It should be used to create a new tls.Config before dialing.
-func (i *Identity) ConfigForPeer(remote peer.ID) *tls.Config {
+func (i *Identity) ConfigForPeer(
+	remote peer.ID,
+	verifiedPeerCallback func(ic.PubKey),
+) *tls.Config {
 	// We need to check the peer ID in the VerifyPeerCertificate callback.
 	// The tls.Config it is also used for listening, and we might also have concurrent dials.
 	// Clone it so we can check for the specific peer ID we're dialing here.
@@ -92,14 +95,10 @@ func (i *Identity) ConfigForPeer(remote peer.ID) *tls.Config {
 		if !remote.MatchesPublicKey(pubKey) {
 			return errors.New("peer IDs don't match")
 		}
+		verifiedPeerCallback(pubKey)
 		return nil
 	}
 	return conf
-}
-
-// KeyFromChain takes a chain of x509.Certificates and returns the peer's public key.
-func KeyFromChain(chain []*x509.Certificate) (ic.PubKey, error) {
-	return getRemotePubKey(chain)
 }
 
 // getRemotePubKey derives the remote's public key from the certificate chain.

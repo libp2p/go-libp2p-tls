@@ -3,6 +3,7 @@ package libp2ptls
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"net"
 	"os"
 	"sync"
@@ -29,8 +30,8 @@ type Transport struct {
 	localPeer peer.ID
 	privKey   ci.PrivKey
 
-	incomingMutex sync.Mutex
-	incoming      map[net.Conn]ic.PubKey
+	activeMutex sync.Mutex
+	active      map[net.Conn]ic.PubKey
 }
 
 // New creates a TLS encrypted transport
@@ -42,9 +43,14 @@ func New(key ci.PrivKey) (*Transport, error) {
 	t := &Transport{
 		localPeer: id,
 		privKey:   key,
-		incoming:  make(map[net.Conn]ic.PubKey),
+		active:    make(map[net.Conn]ic.PubKey),
 	}
-	identity, err := NewIdentity(key, t.verifiedPeer)
+
+	identity, err := NewIdentity(key, func(conn net.Conn, pubKey ic.PubKey) {
+		t.activeMutex.Lock()
+		t.active[conn] = pubKey
+		t.activeMutex.Unlock()
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -57,10 +63,10 @@ var _ cs.Transport = &Transport{}
 // SecureInbound runs the TLS handshake as a server.
 func (t *Transport) SecureInbound(ctx context.Context, insecure net.Conn) (cs.Conn, error) {
 	defer func() {
-		t.incomingMutex.Lock()
+		t.activeMutex.Lock()
 		// only contains this connection if we successfully derived the client's key
-		delete(t.incoming, insecure)
-		t.incomingMutex.Unlock()
+		delete(t.active, insecure)
+		t.activeMutex.Unlock()
 	}()
 
 	serv := tls.Server(insecure, t.identity.Config)
@@ -75,7 +81,12 @@ func (t *Transport) SecureInbound(ctx context.Context, insecure net.Conn) (cs.Co
 // If the handshake fails, the server will close the connection. The client will
 // notice this after 1 RTT when calling Read.
 func (t *Transport) SecureOutbound(ctx context.Context, insecure net.Conn, p peer.ID) (cs.Conn, error) {
-	cl := tls.Client(insecure, t.identity.ConfigForPeer(p))
+	verifiedCallback := func(pubKey ic.PubKey) {
+		t.activeMutex.Lock()
+		t.active[insecure] = pubKey
+		t.activeMutex.Unlock()
+	}
+	cl := tls.Client(insecure, t.identity.ConfigForPeer(p, verifiedCallback))
 	return t.handshake(ctx, insecure, cl)
 }
 
@@ -120,26 +131,15 @@ func (t *Transport) handshake(
 	return conn, nil
 }
 
-func (t *Transport) verifiedPeer(conn net.Conn, pubKey ic.PubKey) {
-	t.incomingMutex.Lock()
-	t.incoming[conn] = pubKey
-	t.incomingMutex.Unlock()
-}
-
 func (t *Transport) setupConn(insecure net.Conn, tlsConn *tls.Conn) (cs.Conn, error) {
-	t.incomingMutex.Lock()
-	remotePubKey := t.incoming[insecure]
-	t.incomingMutex.Unlock()
+	t.activeMutex.Lock()
+	remotePubKey := t.active[insecure]
+	t.activeMutex.Unlock()
 
-	// This case only occurs for the client.
-	// Servers already determined the client's key in the VerifyPeerCertificate callback.
 	if remotePubKey == nil {
-		var err error
-		remotePubKey, err = KeyFromChain(tlsConn.ConnectionState().PeerCertificates)
-		if err != nil {
-			return nil, err
-		}
+		return nil, errors.New("go-libp2p-tls BUG: expected remote pub key to be set")
 	}
+
 	remotePeerID, err := peer.IDFromPublicKey(remotePubKey)
 	if err != nil {
 		return nil, err
