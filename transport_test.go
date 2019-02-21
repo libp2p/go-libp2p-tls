@@ -6,9 +6,15 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
+	"math/big"
 	mrand "math/rand"
 	"net"
+	"time"
+
+	"github.com/onsi/gomega/gbytes"
 
 	cs "github.com/libp2p/go-conn-security"
 	ic "github.com/libp2p/go-libp2p-crypto"
@@ -16,6 +22,12 @@ import (
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 )
+
+type transform struct {
+	name      string
+	apply     func(*Identity)
+	remoteErr string // the error that the side validating the chain gets
+}
 
 var _ = Describe("Transport", func() {
 	var (
@@ -56,22 +68,6 @@ var _ = Describe("Transport", func() {
 		conn, err := net.Dial("tcp", ln.Addr().String())
 		Expect(err).ToNot(HaveOccurred())
 		return conn, <-serverConnChan
-	}
-
-	// modify the cert chain such that verificiation will fail
-	invalidateCertChain := func(identity *Identity) {
-		switch identity.Config.Certificates[0].PrivateKey.(type) {
-		case *rsa.PrivateKey:
-			key, err := rsa.GenerateKey(rand.Reader, 1024)
-			Expect(err).ToNot(HaveOccurred())
-			identity.Config.Certificates[0].PrivateKey = key
-		case *ecdsa.PrivateKey:
-			key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-			Expect(err).ToNot(HaveOccurred())
-			identity.Config.Certificates[0].PrivateKey = key
-		default:
-			Fail("unexpected private key type")
-		}
 	}
 
 	BeforeEach(func() {
@@ -182,50 +178,128 @@ var _ = Describe("Transport", func() {
 		Eventually(done).Should(BeClosed())
 	})
 
-	It("fails if the client presents an invalid cert chain", func() {
-		serverTransport, err := New(serverKey)
-		Expect(err).ToNot(HaveOccurred())
-		clientTransport, err := New(clientKey)
-		Expect(err).ToNot(HaveOccurred())
-		invalidateCertChain(clientTransport.identity)
+	Context("invalid certificates", func() {
+		invalidateCertChain := func(identity *Identity) {
+			switch identity.Config.Certificates[0].PrivateKey.(type) {
+			case *rsa.PrivateKey:
+				key, err := rsa.GenerateKey(rand.Reader, 1024)
+				Expect(err).ToNot(HaveOccurred())
+				identity.Config.Certificates[0].PrivateKey = key
+			case *ecdsa.PrivateKey:
+				key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+				Expect(err).ToNot(HaveOccurred())
+				identity.Config.Certificates[0].PrivateKey = key
+			default:
+				Fail("unexpected private key type")
+			}
+		}
 
-		clientInsecureConn, serverInsecureConn := connect()
+		twoCerts := func(identity *Identity) {
+			tmpl := &x509.Certificate{SerialNumber: big.NewInt(1)}
+			key1, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+			Expect(err).ToNot(HaveOccurred())
+			key2, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+			Expect(err).ToNot(HaveOccurred())
+			cert1DER, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, key1.Public(), key1)
+			Expect(err).ToNot(HaveOccurred())
+			cert1, err := x509.ParseCertificate(cert1DER)
+			Expect(err).ToNot(HaveOccurred())
+			cert2DER, err := x509.CreateCertificate(rand.Reader, tmpl, cert1, key2.Public(), key2)
+			Expect(err).ToNot(HaveOccurred())
+			identity.Config.Certificates = []tls.Certificate{{
+				Certificate: [][]byte{cert2DER, cert1DER},
+				PrivateKey:  key2,
+			}}
+		}
 
-		done := make(chan struct{})
-		go func() {
-			defer GinkgoRecover()
-			_, err := serverTransport.SecureInbound(context.Background(), serverInsecureConn)
-			Expect(err).To(MatchError("tls: invalid certificate signature"))
-			close(done)
-		}()
+		expiredCert := func(identity *Identity) {
+			tmpl := &x509.Certificate{
+				SerialNumber: big.NewInt(1),
+				NotBefore:    time.Now().Add(-time.Hour),
+				NotAfter:     time.Now().Add(-time.Minute),
+			}
+			key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+			Expect(err).ToNot(HaveOccurred())
+			cert, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, key.Public(), key)
+			Expect(err).ToNot(HaveOccurred())
+			identity.Config.Certificates = []tls.Certificate{{
+				Certificate: [][]byte{cert},
+				PrivateKey:  key,
+			}}
+		}
 
-		conn, err := clientTransport.SecureOutbound(context.Background(), clientInsecureConn, serverID)
-		Expect(err).ToNot(HaveOccurred())
-		_, err = conn.Read([]byte{0})
-		Expect(err).To(MatchError("remote error: tls: error decrypting message"))
-		Eventually(done).Should(BeClosed())
-	})
+		transforms := []transform{
+			{
+				name:      "private key used in the TLS handshake doesn't match the public key in the cert",
+				apply:     invalidateCertChain,
+				remoteErr: "tls: invalid certificate signature",
+			},
+			{
+				name:      "certificate chain contains 2 certs",
+				apply:     twoCerts,
+				remoteErr: "expected one certificates in the chain",
+			},
+			{
+				name:      "cert is expired",
+				apply:     expiredCert,
+				remoteErr: "certificate verification failed: x509: certificate has expired or is not yet valid",
+			},
+		}
 
-	It("fails if the server presents an invalid cert chain", func() {
-		serverTransport, err := New(serverKey)
-		Expect(err).ToNot(HaveOccurred())
-		invalidateCertChain(serverTransport.identity)
-		clientTransport, err := New(clientKey)
-		Expect(err).ToNot(HaveOccurred())
+		for i := range transforms {
+			t := transforms[i]
 
-		clientInsecureConn, serverInsecureConn := connect()
+			It(fmt.Sprintf("fails if the client presents an invalid cert: %s", t.name), func() {
+				serverTransport, err := New(serverKey)
+				Expect(err).ToNot(HaveOccurred())
+				clientTransport, err := New(clientKey)
+				Expect(err).ToNot(HaveOccurred())
+				t.apply(clientTransport.identity)
 
-		done := make(chan struct{})
-		go func() {
-			defer GinkgoRecover()
-			_, err := serverTransport.SecureInbound(context.Background(), serverInsecureConn)
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("remote error: tls:"))
-			close(done)
-		}()
+				clientInsecureConn, serverInsecureConn := connect()
 
-		_, err = clientTransport.SecureOutbound(context.Background(), clientInsecureConn, serverID)
-		Expect(err).To(MatchError("tls: invalid certificate signature"))
-		Eventually(done).Should(BeClosed())
+				done := make(chan struct{})
+				go func() {
+					defer GinkgoRecover()
+					_, err := serverTransport.SecureInbound(context.Background(), serverInsecureConn)
+					Expect(err).To(MatchError(t.remoteErr))
+					close(done)
+				}()
+
+				conn, err := clientTransport.SecureOutbound(context.Background(), clientInsecureConn, serverID)
+				Expect(err).ToNot(HaveOccurred())
+				_, err = gbytes.TimeoutReader(conn, time.Second).Read([]byte{0})
+				Expect(err).To(Or(
+					// if the certificate's public key doesn't match the private key used for signing
+					MatchError("remote error: tls: error decrypting message"),
+					// all other errors
+					MatchError("remote error: tls: bad certificate"),
+				))
+				Eventually(done).Should(BeClosed())
+			})
+
+			It(fmt.Sprintf("fails if the server presents an invalid cert: %s", t.name), func() {
+				serverTransport, err := New(serverKey)
+				Expect(err).ToNot(HaveOccurred())
+				t.apply(serverTransport.identity)
+				clientTransport, err := New(clientKey)
+				Expect(err).ToNot(HaveOccurred())
+
+				clientInsecureConn, serverInsecureConn := connect()
+
+				done := make(chan struct{})
+				go func() {
+					defer GinkgoRecover()
+					_, err := serverTransport.SecureInbound(context.Background(), serverInsecureConn)
+					Expect(err).To(HaveOccurred())
+					Expect(err.Error()).To(ContainSubstring("remote error: tls:"))
+					close(done)
+				}()
+
+				_, err = clientTransport.SecureOutbound(context.Background(), clientInsecureConn, serverID)
+				Expect(err).To(MatchError(t.remoteErr))
+				Eventually(done).Should(BeClosed())
+			})
+		}
 	})
 })

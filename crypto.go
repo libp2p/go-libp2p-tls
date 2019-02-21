@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"net"
 	"time"
 
 	ic "github.com/libp2p/go-libp2p-crypto"
@@ -15,16 +16,53 @@ import (
 	peer "github.com/libp2p/go-libp2p-peer"
 )
 
+const certValidityPeriod = 180 * 24 * time.Hour
+
 // Identity is used to secure connections
 type Identity struct {
 	*tls.Config
 }
 
 // NewIdentity creates a new identity
-func NewIdentity(privKey ic.PrivKey) (*Identity, error) {
-	conf, err := generateConfig(privKey)
+func NewIdentity(
+	privKey ic.PrivKey,
+	verifiedPeerCallback func(net.Conn, ic.PubKey),
+) (*Identity, error) {
+	key, cert, err := keyToCertificate(privKey)
 	if err != nil {
 		return nil, err
+	}
+	conf := &tls.Config{
+		MinVersion:         tls.VersionTLS13,
+		InsecureSkipVerify: true, // This is not insecure here. We will verify the cert chain ourselves.
+		ClientAuth:         tls.RequireAnyClientCert,
+		Certificates: []tls.Certificate{{
+			Certificate: [][]byte{cert.Raw},
+			PrivateKey:  key,
+		}},
+	}
+	// When receiving the ClientHello, create a new tls.Config.
+	// This new config has a VerifyPeerCertificate set, which calls the verifiedPeerCallback
+	// when we derived the remote's public key from its certificate chain.
+	conf.GetConfigForClient = func(ch *tls.ClientHelloInfo) (*tls.Config, error) {
+		c := conf.Clone()
+		c.VerifyPeerCertificate = func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
+			chain := make([]*x509.Certificate, len(rawCerts))
+			for i := 0; i < len(rawCerts); i++ {
+				cert, err := x509.ParseCertificate(rawCerts[i])
+				if err != nil {
+					return err
+				}
+				chain[i] = cert
+			}
+			pubKey, err := getRemotePubKey(chain)
+			if err != nil {
+				return err
+			}
+			verifiedPeerCallback(ch.Conn, pubKey)
+			return nil
+		}
+		return c, nil
 	}
 	return &Identity{conf}, nil
 }
@@ -64,24 +102,7 @@ func KeyFromChain(chain []*x509.Certificate) (ic.PubKey, error) {
 	return getRemotePubKey(chain)
 }
 
-const certValidityPeriod = 180 * 24 * time.Hour
-
-func generateConfig(privKey ic.PrivKey) (*tls.Config, error) {
-	key, cert, err := keyToCertificate(privKey)
-	if err != nil {
-		return nil, err
-	}
-	return &tls.Config{
-		MinVersion:         tls.VersionTLS13,
-		InsecureSkipVerify: true, // This is not insecure here. We will verify the cert chain ourselves.
-		ClientAuth:         tls.RequireAnyClientCert,
-		Certificates: []tls.Certificate{{
-			Certificate: [][]byte{cert.Raw},
-			PrivateKey:  key,
-		}},
-	}, nil
-}
-
+// getRemotePubKey derives the remote's public key from the certificate chain.
 func getRemotePubKey(chain []*x509.Certificate) (ic.PubKey, error) {
 	if len(chain) != 1 {
 		return nil, errors.New("expected one certificates in the chain")
@@ -89,7 +110,9 @@ func getRemotePubKey(chain []*x509.Certificate) (ic.PubKey, error) {
 	pool := x509.NewCertPool()
 	pool.AddCert(chain[0])
 	if _, err := chain[0].Verify(x509.VerifyOptions{Roots: pool}); err != nil {
-		return nil, err
+		// If we return an x509 error here, it will be sent on the wire.
+		// Wrap the error to avoid that.
+		return nil, fmt.Errorf("certificate verification failed: %s", err)
 	}
 	remotePubKey, err := x509.MarshalPKIXPublicKey(chain[0].PublicKey)
 	if err != nil {

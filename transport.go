@@ -5,9 +5,11 @@ import (
 	"crypto/tls"
 	"net"
 	"os"
+	"sync"
 
 	cs "github.com/libp2p/go-conn-security"
 	ci "github.com/libp2p/go-libp2p-crypto"
+	ic "github.com/libp2p/go-libp2p-crypto"
 	peer "github.com/libp2p/go-libp2p-peer"
 )
 
@@ -26,6 +28,9 @@ type Transport struct {
 
 	localPeer peer.ID
 	privKey   ci.PrivKey
+
+	incomingMutex sync.Mutex
+	incoming      map[net.Conn]ic.PubKey
 }
 
 // New creates a TLS encrypted transport
@@ -34,23 +39,32 @@ func New(key ci.PrivKey) (*Transport, error) {
 	if err != nil {
 		return nil, err
 	}
-	identity, err := NewIdentity(key)
+	t := &Transport{
+		localPeer: id,
+		privKey:   key,
+		incoming:  make(map[net.Conn]ic.PubKey),
+	}
+	identity, err := NewIdentity(key, t.verifiedPeer)
 	if err != nil {
 		return nil, err
 	}
-	return &Transport{
-		identity:  identity,
-		localPeer: id,
-		privKey:   key,
-	}, nil
+	t.identity = identity
+	return t, nil
 }
 
 var _ cs.Transport = &Transport{}
 
 // SecureInbound runs the TLS handshake as a server.
 func (t *Transport) SecureInbound(ctx context.Context, insecure net.Conn) (cs.Conn, error) {
+	defer func() {
+		t.incomingMutex.Lock()
+		// only contains this connection if we successfully derived the client's key
+		delete(t.incoming, insecure)
+		t.incomingMutex.Unlock()
+	}()
+
 	serv := tls.Server(insecure, t.identity.Config)
-	return t.handshake(ctx, serv)
+	return t.handshake(ctx, insecure, serv)
 }
 
 // SecureOutbound runs the TLS handshake as a client.
@@ -62,10 +76,13 @@ func (t *Transport) SecureInbound(ctx context.Context, insecure net.Conn) (cs.Co
 // notice this after 1 RTT when calling Read.
 func (t *Transport) SecureOutbound(ctx context.Context, insecure net.Conn, p peer.ID) (cs.Conn, error) {
 	cl := tls.Client(insecure, t.identity.ConfigForPeer(p))
-	return t.handshake(ctx, cl)
+	return t.handshake(ctx, insecure, cl)
 }
 
-func (t *Transport) handshake(ctx context.Context, tlsConn *tls.Conn,
+func (t *Transport) handshake(
+	ctx context.Context,
+	insecure net.Conn,
+	tlsConn *tls.Conn,
 ) (cs.Conn, error) {
 	// There's no way to pass a context to tls.Conn.Handshake().
 	// See https://github.com/golang/go/issues/18482.
@@ -92,7 +109,7 @@ func (t *Transport) handshake(ctx context.Context, tlsConn *tls.Conn,
 		}
 		return nil, err
 	}
-	conn, err := t.setupConn(tlsConn)
+	conn, err := t.setupConn(insecure, tlsConn)
 	if err != nil {
 		// if the context was canceled, return the context error
 		if ctxErr := ctx.Err(); ctxErr != nil {
@@ -103,10 +120,25 @@ func (t *Transport) handshake(ctx context.Context, tlsConn *tls.Conn,
 	return conn, nil
 }
 
-func (t *Transport) setupConn(tlsConn *tls.Conn) (cs.Conn, error) {
-	remotePubKey, err := KeyFromChain(tlsConn.ConnectionState().PeerCertificates)
-	if err != nil {
-		return nil, err
+func (t *Transport) verifiedPeer(conn net.Conn, pubKey ic.PubKey) {
+	t.incomingMutex.Lock()
+	t.incoming[conn] = pubKey
+	t.incomingMutex.Unlock()
+}
+
+func (t *Transport) setupConn(insecure net.Conn, tlsConn *tls.Conn) (cs.Conn, error) {
+	t.incomingMutex.Lock()
+	remotePubKey := t.incoming[insecure]
+	t.incomingMutex.Unlock()
+
+	// This case only occurs for the client.
+	// Servers already determined the client's key in the VerifyPeerCertificate callback.
+	if remotePubKey == nil {
+		var err error
+		remotePubKey, err = KeyFromChain(tlsConn.ConnectionState().PeerCertificates)
+		if err != nil {
+			return nil, err
+		}
 	}
 	remotePeerID, err := peer.IDFromPublicKey(remotePubKey)
 	if err != nil {
