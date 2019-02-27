@@ -180,15 +180,15 @@ var _ = Describe("Transport", func() {
 
 	Context("invalid certificates", func() {
 		invalidateCertChain := func(identity *Identity) {
-			switch identity.Config.Certificates[0].PrivateKey.(type) {
+			switch identity.config.Certificates[0].PrivateKey.(type) {
 			case *rsa.PrivateKey:
 				key, err := rsa.GenerateKey(rand.Reader, 1024)
 				Expect(err).ToNot(HaveOccurred())
-				identity.Config.Certificates[0].PrivateKey = key
+				identity.config.Certificates[0].PrivateKey = key
 			case *ecdsa.PrivateKey:
 				key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 				Expect(err).ToNot(HaveOccurred())
-				identity.Config.Certificates[0].PrivateKey = key
+				identity.config.Certificates[0].PrivateKey = key
 			default:
 				Fail("unexpected private key type")
 			}
@@ -206,7 +206,7 @@ var _ = Describe("Transport", func() {
 			Expect(err).ToNot(HaveOccurred())
 			cert2DER, err := x509.CreateCertificate(rand.Reader, tmpl, cert1, key2.Public(), key2)
 			Expect(err).ToNot(HaveOccurred())
-			identity.Config.Certificates = []tls.Certificate{{
+			identity.config.Certificates = []tls.Certificate{{
 				Certificate: [][]byte{cert2DER, cert1DER},
 				PrivateKey:  key2,
 			}}
@@ -222,7 +222,7 @@ var _ = Describe("Transport", func() {
 			Expect(err).ToNot(HaveOccurred())
 			cert, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, key.Public(), key)
 			Expect(err).ToNot(HaveOccurred())
-			identity.Config.Certificates = []tls.Certificate{{
+			identity.config.Certificates = []tls.Certificate{{
 				Certificate: [][]byte{cert},
 				PrivateKey:  key,
 			}}

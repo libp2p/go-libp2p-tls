@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
-	"net"
 	"time"
 
 	ic "github.com/libp2p/go-libp2p-crypto"
@@ -20,66 +19,55 @@ const certValidityPeriod = 180 * 24 * time.Hour
 
 // Identity is used to secure connections
 type Identity struct {
-	*tls.Config
+	config tls.Config
 }
 
 // NewIdentity creates a new identity
-func NewIdentity(
-	privKey ic.PrivKey,
-	verifiedPeerCallback func(net.Conn, ic.PubKey),
-) (*Identity, error) {
+func NewIdentity(privKey ic.PrivKey) (*Identity, error) {
 	key, cert, err := keyToCertificate(privKey)
 	if err != nil {
 		return nil, err
 	}
-	conf := &tls.Config{
-		MinVersion:         tls.VersionTLS13,
-		InsecureSkipVerify: true, // This is not insecure here. We will verify the cert chain ourselves.
-		ClientAuth:         tls.RequireAnyClientCert,
-		Certificates: []tls.Certificate{{
-			Certificate: [][]byte{cert.Raw},
-			PrivateKey:  key,
-		}},
-	}
-	// When receiving the ClientHello, create a new tls.Config.
-	// This new config has a VerifyPeerCertificate set, which calls the verifiedPeerCallback
-	// when we derived the remote's public key from its certificate chain.
-	conf.GetConfigForClient = func(ch *tls.ClientHelloInfo) (*tls.Config, error) {
-		c := conf.Clone()
-		c.VerifyPeerCertificate = func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
-			chain := make([]*x509.Certificate, len(rawCerts))
-			for i := 0; i < len(rawCerts); i++ {
-				cert, err := x509.ParseCertificate(rawCerts[i])
-				if err != nil {
-					return err
-				}
-				chain[i] = cert
-			}
-			pubKey, err := getRemotePubKey(chain)
-			if err != nil {
-				return err
-			}
-			verifiedPeerCallback(ch.Conn, pubKey)
-			return nil
-		}
-		return c, nil
-	}
-	return &Identity{conf}, nil
+	return &Identity{
+		config: tls.Config{
+			MinVersion:         tls.VersionTLS13,
+			InsecureSkipVerify: true, // This is not insecure here. We will verify the cert chain ourselves.
+			ClientAuth:         tls.RequireAnyClientCert,
+			Certificates: []tls.Certificate{{
+				Certificate: [][]byte{cert.Raw},
+				PrivateKey:  key,
+			}},
+			VerifyPeerCertificate: func(_ [][]byte, _ [][]*x509.Certificate) error {
+				panic("tls config not specialized for peer")
+			},
+		},
+	}, nil
 }
 
-// ConfigForPeer creates a new tls.Config that verifies the peers certificate chain.
-// It should be used to create a new tls.Config before dialing.
+// ConfigForAny is a short-hand for ConfigForPeer("").
+func (i *Identity) ConfigForAny() (*tls.Config, <-chan ic.PubKey) {
+	return i.ConfigForPeer("")
+}
+
+// ConfigForPeer creates a new single-use tls.Config that verifies the peer's
+// certificate chain and returns the peer's public key via the channel. If the
+// peer ID is empty, the returned config will accept any peer.
+//
+// It should be used to create a new tls.Config before securing either an
+// incoming or outgoing connection.
 func (i *Identity) ConfigForPeer(
 	remote peer.ID,
-	verifiedPeerCallback func(ic.PubKey),
-) *tls.Config {
+) (*tls.Config, <-chan ic.PubKey) {
+	keyCh := make(chan ic.PubKey, 1)
 	// We need to check the peer ID in the VerifyPeerCertificate callback.
 	// The tls.Config it is also used for listening, and we might also have concurrent dials.
 	// Clone it so we can check for the specific peer ID we're dialing here.
-	conf := i.Config.Clone()
+	conf := i.config.Clone()
 	// We're using InsecureSkipVerify, so the verifiedChains parameter will always be empty.
 	// We need to parse the certificates ourselves from the raw certs.
 	conf.VerifyPeerCertificate = func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
+		defer close(keyCh)
+
 		chain := make([]*x509.Certificate, len(rawCerts))
 		for i := 0; i < len(rawCerts); i++ {
 			cert, err := x509.ParseCertificate(rawCerts[i])
@@ -88,17 +76,18 @@ func (i *Identity) ConfigForPeer(
 			}
 			chain[i] = cert
 		}
+
 		pubKey, err := getRemotePubKey(chain)
 		if err != nil {
 			return err
 		}
-		if !remote.MatchesPublicKey(pubKey) {
+		if remote != "" && !remote.MatchesPublicKey(pubKey) {
 			return errors.New("peer IDs don't match")
 		}
-		verifiedPeerCallback(pubKey)
+		keyCh <- pubKey
 		return nil
 	}
-	return conf
+	return conf, keyCh
 }
 
 // getRemotePubKey derives the remote's public key from the certificate chain.
