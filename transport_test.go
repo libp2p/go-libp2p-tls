@@ -17,7 +17,7 @@ import (
 	"github.com/onsi/gomega/gbytes"
 
 	cs "github.com/libp2p/go-conn-security"
-	ic "github.com/libp2p/go-libp2p-crypto"
+	ci "github.com/libp2p/go-libp2p-crypto"
 	peer "github.com/libp2p/go-libp2p-peer"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
@@ -31,21 +31,21 @@ type transform struct {
 
 var _ = Describe("Transport", func() {
 	var (
-		serverKey, clientKey ic.PrivKey
+		serverKey, clientKey ci.PrivKey
 		serverID, clientID   peer.ID
 	)
 
-	createPeer := func() (peer.ID, ic.PrivKey) {
-		var priv ic.PrivKey
+	createPeer := func() (peer.ID, ci.PrivKey) {
+		var priv ci.PrivKey
 		if mrand.Int()%2 == 0 {
 			fmt.Fprintf(GinkgoWriter, " using an ECDSA key: ")
 			var err error
-			priv, _, err = ic.GenerateECDSAKeyPair(rand.Reader)
+			priv, _, err = ci.GenerateECDSAKeyPair(rand.Reader)
 			Expect(err).ToNot(HaveOccurred())
 		} else {
 			fmt.Fprintf(GinkgoWriter, " using an RSA key: ")
 			var err error
-			priv, _, err = ic.GenerateRSAKeyPair(1024, rand.Reader)
+			priv, _, err = ci.GenerateRSAKeyPair(1024, rand.Reader)
 			Expect(err).ToNot(HaveOccurred())
 		}
 		id, err := peer.IDFromPrivateKey(priv)

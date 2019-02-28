@@ -9,7 +9,6 @@ import (
 
 	cs "github.com/libp2p/go-conn-security"
 	ci "github.com/libp2p/go-libp2p-crypto"
-	ic "github.com/libp2p/go-libp2p-crypto"
 	peer "github.com/libp2p/go-libp2p-peer"
 )
 
@@ -101,7 +100,7 @@ func (t *Transport) handshake(
 	}
 
 	// Should be ready by this point, don't block.
-	var remotePubKey ic.PubKey
+	var remotePubKey ci.PubKey
 	select {
 	case remotePubKey = <-keyCh:
 	default:
@@ -118,7 +117,7 @@ func (t *Transport) handshake(
 	return conn, nil
 }
 
-func (t *Transport) setupConn(tlsConn *tls.Conn, remotePubKey ic.PubKey) (cs.Conn, error) {
+func (t *Transport) setupConn(tlsConn *tls.Conn, remotePubKey ci.PubKey) (cs.Conn, error) {
 	if remotePubKey == nil {
 		return nil, errors.New("go-libp2p-tls BUG: expected remote pub key to be set")
 	}
