@@ -1,4 +1,4 @@
-package cmdimpl
+package tlsdiag
 
 import (
 	"crypto/rand"
