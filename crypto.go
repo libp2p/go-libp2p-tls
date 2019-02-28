@@ -15,30 +15,59 @@ import (
 	peer "github.com/libp2p/go-libp2p-peer"
 )
 
+const certValidityPeriod = 180 * 24 * time.Hour
+
 // Identity is used to secure connections
 type Identity struct {
-	*tls.Config
+	config tls.Config
 }
 
 // NewIdentity creates a new identity
 func NewIdentity(privKey ic.PrivKey) (*Identity, error) {
-	conf, err := generateConfig(privKey)
+	key, cert, err := keyToCertificate(privKey)
 	if err != nil {
 		return nil, err
 	}
-	return &Identity{conf}, nil
+	return &Identity{
+		config: tls.Config{
+			MinVersion:         tls.VersionTLS13,
+			InsecureSkipVerify: true, // This is not insecure here. We will verify the cert chain ourselves.
+			ClientAuth:         tls.RequireAnyClientCert,
+			Certificates: []tls.Certificate{{
+				Certificate: [][]byte{cert.Raw},
+				PrivateKey:  key,
+			}},
+			VerifyPeerCertificate: func(_ [][]byte, _ [][]*x509.Certificate) error {
+				panic("tls config not specialized for peer")
+			},
+		},
+	}, nil
 }
 
-// ConfigForPeer creates a new tls.Config that verifies the peers certificate chain.
-// It should be used to create a new tls.Config before dialing.
-func (i *Identity) ConfigForPeer(remote peer.ID) *tls.Config {
+// ConfigForAny is a short-hand for ConfigForPeer("").
+func (i *Identity) ConfigForAny() (*tls.Config, <-chan ic.PubKey) {
+	return i.ConfigForPeer("")
+}
+
+// ConfigForPeer creates a new single-use tls.Config that verifies the peer's
+// certificate chain and returns the peer's public key via the channel. If the
+// peer ID is empty, the returned config will accept any peer.
+//
+// It should be used to create a new tls.Config before securing either an
+// incoming or outgoing connection.
+func (i *Identity) ConfigForPeer(
+	remote peer.ID,
+) (*tls.Config, <-chan ic.PubKey) {
+	keyCh := make(chan ic.PubKey, 1)
 	// We need to check the peer ID in the VerifyPeerCertificate callback.
 	// The tls.Config it is also used for listening, and we might also have concurrent dials.
 	// Clone it so we can check for the specific peer ID we're dialing here.
-	conf := i.Config.Clone()
+	conf := i.config.Clone()
 	// We're using InsecureSkipVerify, so the verifiedChains parameter will always be empty.
 	// We need to parse the certificates ourselves from the raw certs.
 	conf.VerifyPeerCertificate = func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
+		defer close(keyCh)
+
 		chain := make([]*x509.Certificate, len(rawCerts))
 		for i := 0; i < len(rawCerts); i++ {
 			cert, err := x509.ParseCertificate(rawCerts[i])
@@ -47,41 +76,21 @@ func (i *Identity) ConfigForPeer(remote peer.ID) *tls.Config {
 			}
 			chain[i] = cert
 		}
+
 		pubKey, err := getRemotePubKey(chain)
 		if err != nil {
 			return err
 		}
-		if !remote.MatchesPublicKey(pubKey) {
+		if remote != "" && !remote.MatchesPublicKey(pubKey) {
 			return errors.New("peer IDs don't match")
 		}
+		keyCh <- pubKey
 		return nil
 	}
-	return conf
+	return conf, keyCh
 }
 
-// KeyFromChain takes a chain of x509.Certificates and returns the peer's public key.
-func KeyFromChain(chain []*x509.Certificate) (ic.PubKey, error) {
-	return getRemotePubKey(chain)
-}
-
-const certValidityPeriod = 180 * 24 * time.Hour
-
-func generateConfig(privKey ic.PrivKey) (*tls.Config, error) {
-	key, cert, err := keyToCertificate(privKey)
-	if err != nil {
-		return nil, err
-	}
-	return &tls.Config{
-		MinVersion:         tls.VersionTLS13,
-		InsecureSkipVerify: true, // This is not insecure here. We will verify the cert chain ourselves.
-		ClientAuth:         tls.RequireAnyClientCert,
-		Certificates: []tls.Certificate{{
-			Certificate: [][]byte{cert.Raw},
-			PrivateKey:  key,
-		}},
-	}, nil
-}
-
+// getRemotePubKey derives the remote's public key from the certificate chain.
 func getRemotePubKey(chain []*x509.Certificate) (ic.PubKey, error) {
 	if len(chain) != 1 {
 		return nil, errors.New("expected one certificates in the chain")
@@ -89,7 +98,9 @@ func getRemotePubKey(chain []*x509.Certificate) (ic.PubKey, error) {
 	pool := x509.NewCertPool()
 	pool.AddCert(chain[0])
 	if _, err := chain[0].Verify(x509.VerifyOptions{Roots: pool}); err != nil {
-		return nil, err
+		// If we return an x509 error here, it will be sent on the wire.
+		// Wrap the error to avoid that.
+		return nil, fmt.Errorf("certificate verification failed: %s", err)
 	}
 	remotePubKey, err := x509.MarshalPKIXPublicKey(chain[0].PublicKey)
 	if err != nil {
