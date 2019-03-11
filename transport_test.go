@@ -53,7 +53,7 @@ var _ = Describe("Transport", func() {
 			fmt.Fprintf(GinkgoWriter, " using an Ed25519 key: ")
 			priv, _, err = ci.GenerateEd25519Key(rand.Reader)
 		case 3:
-			fmt.Fprintf(GinkgoWriter, " using an Ed25519 key: ")
+			fmt.Fprintf(GinkgoWriter, " using an secp256k1 key: ")
 			priv, _, err = ci.GenerateSecp256k1Key(rand.Reader)
 		}
 		Expect(err).ToNot(HaveOccurred())
