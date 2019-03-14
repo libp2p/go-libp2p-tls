@@ -7,7 +7,7 @@ import (
 
 var _ = Describe("Extensions", func() {
 	It("generates a prefixed extension ID", func() {
-		Expect(getPrefixedExtensionID([]int{13, 37})).To(Equal([]int{1, 3, 6, 1, 4, 1, 123456789, 13, 37}))
+		Expect(getPrefixedExtensionID([]int{13, 37})).To(Equal([]int{1, 3, 6, 1, 4, 1, 53594, 13, 37}))
 	})
 
 	It("compares extension IDs", func() {
