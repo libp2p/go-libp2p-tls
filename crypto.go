@@ -21,6 +21,7 @@ import (
 )
 
 const certValidityPeriod = 100 * 365 * 24 * time.Hour // ~100 years
+const certificatePrefix = "libp2p-tls-handshake:"
 
 var extensionID = getPrefixedExtensionID([]int{1, 1})
 
@@ -139,7 +140,7 @@ func getRemotePubKey(chain []*x509.Certificate) (ic.PubKey, error) {
 	if err != nil {
 		return nil, err
 	}
-	valid, err := pubKey.Verify(certKeyPub, sk.Signature)
+	valid, err := pubKey.Verify(append([]byte(certificatePrefix), certKeyPub...), sk.Signature)
 	if err != nil {
 		return nil, fmt.Errorf("signature verification failed: %s", err)
 	}
@@ -163,7 +164,7 @@ func keyToCertificate(sk ic.PrivKey) (*tls.Certificate, error) {
 	if err != nil {
 		return nil, err
 	}
-	signature, err := sk.Sign(certKeyPub)
+	signature, err := sk.Sign(append([]byte(certificatePrefix), certKeyPub...))
 	if err != nil {
 		return nil, err
 	}
