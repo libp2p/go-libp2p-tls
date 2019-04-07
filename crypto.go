@@ -51,6 +51,7 @@ func NewIdentity(privKey ic.PrivKey) (*Identity, error) {
 			VerifyPeerCertificate: func(_ [][]byte, _ [][]*x509.Certificate) error {
 				panic("tls config not specialized for peer")
 			},
+			SessionTicketsDisabled: true,
 		},
 	}, nil
 }
