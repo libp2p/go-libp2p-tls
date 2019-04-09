@@ -2,12 +2,15 @@ package libp2ptls
 
 import (
 	"context"
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/tls"
 	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/asn1"
 	"fmt"
 	"math/big"
 	mrand "math/rand"
@@ -15,6 +18,7 @@ import (
 	"time"
 
 	"github.com/onsi/gomega/gbytes"
+	"github.com/onsi/gomega/types"
 
 	cs "github.com/libp2p/go-conn-security"
 	ci "github.com/libp2p/go-libp2p-crypto"
@@ -26,7 +30,7 @@ import (
 type transform struct {
 	name      string
 	apply     func(*Identity)
-	remoteErr string // the error that the side validating the chain gets
+	remoteErr types.GomegaMatcher // the error that the side validating the chain gets
 }
 
 var _ = Describe("Transport", func() {
@@ -37,17 +41,22 @@ var _ = Describe("Transport", func() {
 
 	createPeer := func() (peer.ID, ci.PrivKey) {
 		var priv ci.PrivKey
-		if mrand.Int()%2 == 0 {
+		var err error
+		switch mrand.Int() % 4 {
+		case 0:
 			fmt.Fprintf(GinkgoWriter, " using an ECDSA key: ")
-			var err error
 			priv, _, err = ci.GenerateECDSAKeyPair(rand.Reader)
-			Expect(err).ToNot(HaveOccurred())
-		} else {
+		case 1:
 			fmt.Fprintf(GinkgoWriter, " using an RSA key: ")
-			var err error
 			priv, _, err = ci.GenerateRSAKeyPair(1024, rand.Reader)
-			Expect(err).ToNot(HaveOccurred())
+		case 2:
+			fmt.Fprintf(GinkgoWriter, " using an Ed25519 key: ")
+			priv, _, err = ci.GenerateEd25519Key(rand.Reader)
+		case 3:
+			fmt.Fprintf(GinkgoWriter, " using an secp256k1 key: ")
+			priv, _, err = ci.GenerateSecp256k1Key(rand.Reader)
 		}
+		Expect(err).ToNot(HaveOccurred())
 		id, err := peer.IDFromPrivateKey(priv)
 		Expect(err).ToNot(HaveOccurred())
 		fmt.Fprintln(GinkgoWriter, id.Pretty())
@@ -212,37 +221,149 @@ var _ = Describe("Transport", func() {
 			}}
 		}
 
+		getCertWithKey := func(key crypto.Signer, tmpl *x509.Certificate) tls.Certificate {
+			cert, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, key.Public(), key)
+			Expect(err).ToNot(HaveOccurred())
+			return tls.Certificate{
+				Certificate: [][]byte{cert},
+				PrivateKey:  key,
+			}
+		}
+
+		getCert := func(tmpl *x509.Certificate) tls.Certificate {
+			key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+			Expect(err).ToNot(HaveOccurred())
+			return getCertWithKey(key, tmpl)
+		}
+
 		expiredCert := func(identity *Identity) {
-			tmpl := &x509.Certificate{
+			cert := getCert(&x509.Certificate{
 				SerialNumber: big.NewInt(1),
 				NotBefore:    time.Now().Add(-time.Hour),
 				NotAfter:     time.Now().Add(-time.Minute),
-			}
-			key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+			})
+			identity.config.Certificates = []tls.Certificate{cert}
+		}
+
+		noKeyExtension := func(identity *Identity) {
+			cert := getCert(&x509.Certificate{
+				SerialNumber: big.NewInt(1),
+				NotBefore:    time.Now().Add(-time.Hour),
+				NotAfter:     time.Now().Add(time.Hour),
+			})
+			identity.config.Certificates = []tls.Certificate{cert}
+		}
+
+		unparseableKeyExtension := func(identity *Identity) {
+			cert := getCert(&x509.Certificate{
+				SerialNumber: big.NewInt(1),
+				NotBefore:    time.Now().Add(-time.Hour),
+				NotAfter:     time.Now().Add(time.Hour),
+				ExtraExtensions: []pkix.Extension{
+					{Id: extensionID, Value: []byte("foobar")},
+				},
+			})
+			identity.config.Certificates = []tls.Certificate{cert}
+		}
+
+		unparseableKey := func(identity *Identity) {
+			data, err := asn1.Marshal(signedKey{PubKey: []byte("foobar")})
 			Expect(err).ToNot(HaveOccurred())
-			cert, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, key.Public(), key)
+			cert := getCert(&x509.Certificate{
+				SerialNumber: big.NewInt(1),
+				NotBefore:    time.Now().Add(-time.Hour),
+				NotAfter:     time.Now().Add(time.Hour),
+				ExtraExtensions: []pkix.Extension{
+					{Id: extensionID, Value: data},
+				},
+			})
+			identity.config.Certificates = []tls.Certificate{cert}
+		}
+
+		tooShortSignature := func(identity *Identity) {
+			key, _, err := ci.GenerateSecp256k1Key(rand.Reader)
 			Expect(err).ToNot(HaveOccurred())
-			identity.config.Certificates = []tls.Certificate{{
-				Certificate: [][]byte{cert},
-				PrivateKey:  key,
-			}}
+			keyBytes, err := key.GetPublic().Bytes()
+			Expect(err).ToNot(HaveOccurred())
+			data, err := asn1.Marshal(signedKey{
+				PubKey:    keyBytes,
+				Signature: []byte("foobar"),
+			})
+			Expect(err).ToNot(HaveOccurred())
+			cert := getCert(&x509.Certificate{
+				SerialNumber: big.NewInt(1),
+				NotBefore:    time.Now().Add(-time.Hour),
+				NotAfter:     time.Now().Add(time.Hour),
+				ExtraExtensions: []pkix.Extension{
+					{Id: extensionID, Value: data},
+				},
+			})
+			identity.config.Certificates = []tls.Certificate{cert}
+		}
+
+		invalidSignature := func(identity *Identity) {
+			key, _, err := ci.GenerateSecp256k1Key(rand.Reader)
+			Expect(err).ToNot(HaveOccurred())
+			keyBytes, err := key.GetPublic().Bytes()
+			Expect(err).ToNot(HaveOccurred())
+			signature, err := key.Sign([]byte("foobar"))
+			Expect(err).ToNot(HaveOccurred())
+			data, err := asn1.Marshal(signedKey{
+				PubKey:    keyBytes,
+				Signature: signature,
+			})
+			Expect(err).ToNot(HaveOccurred())
+			cert := getCert(&x509.Certificate{
+				SerialNumber: big.NewInt(1),
+				NotBefore:    time.Now().Add(-time.Hour),
+				NotAfter:     time.Now().Add(time.Hour),
+				ExtraExtensions: []pkix.Extension{
+					{Id: extensionID, Value: data},
+				},
+			})
+			identity.config.Certificates = []tls.Certificate{cert}
 		}
 
 		transforms := []transform{
 			{
 				name:      "private key used in the TLS handshake doesn't match the public key in the cert",
 				apply:     invalidateCertChain,
-				remoteErr: "tls: invalid certificate signature",
+				remoteErr: Equal("tls: invalid certificate signature"),
 			},
 			{
 				name:      "certificate chain contains 2 certs",
 				apply:     twoCerts,
-				remoteErr: "expected one certificates in the chain",
+				remoteErr: Equal("expected one certificates in the chain"),
 			},
 			{
 				name:      "cert is expired",
 				apply:     expiredCert,
-				remoteErr: "certificate verification failed: x509: certificate has expired or is not yet valid",
+				remoteErr: Equal("certificate verification failed: x509: certificate has expired or is not yet valid"),
+			},
+			{
+				name:      "cert doesn't have the key extension",
+				apply:     noKeyExtension,
+				remoteErr: Equal("expected certificate to contain the key extension"),
+			},
+			{
+				name:      "key extension not parseable",
+				apply:     unparseableKeyExtension,
+				remoteErr: ContainSubstring("asn1"),
+			},
+			{
+				name:      "key protobuf not parseable",
+				apply:     unparseableKey,
+				remoteErr: ContainSubstring("unmarshalling public key failed: proto:"),
+			},
+			{
+				name:      "signature is malformed",
+				apply:     tooShortSignature,
+				remoteErr: ContainSubstring("signature verification failed:"),
+			},
+			{
+				name:      "signature is invalid",
+				apply:     invalidSignature,
+				remoteErr: Equal("signature invalid"),
 			},
 		}
 
@@ -262,7 +383,8 @@ var _ = Describe("Transport", func() {
 				go func() {
 					defer GinkgoRecover()
 					_, err := serverTransport.SecureInbound(context.Background(), serverInsecureConn)
-					Expect(err).To(MatchError(t.remoteErr))
+					Expect(err).To(HaveOccurred())
+					Expect(err.Error()).To(t.remoteErr)
 					close(done)
 				}()
 
@@ -297,7 +419,8 @@ var _ = Describe("Transport", func() {
 				}()
 
 				_, err = clientTransport.SecureOutbound(context.Background(), clientInsecureConn, serverID)
-				Expect(err).To(MatchError(t.remoteErr))
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(t.remoteErr)
 				Eventually(done).Should(BeClosed())
 			})
 		}

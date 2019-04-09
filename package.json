@@ -12,6 +12,12 @@
       "hash": "QmbyjEKtxXmZdiByBiNhfayzEuEPPBvuD2dLpHky8cHUvy",
       "name": "go-conn-security",
       "version": "0.1.20"
+    },
+    {
+      "author": "marten-seemann",
+      "hash": "QmauyZ2BbYbcTJr1RudEsbQoKNgKkZi9pDZBJVyzw3uJD4",
+      "name": "cpu",
+      "version": "0.1.0"
     }
   ],
   "gxVersion": "0.12.1",
