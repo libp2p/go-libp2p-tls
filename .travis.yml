@@ -40,4 +40,3 @@ after_success:
 
 cache:
   directories:
-    - $GOPATH/src/gx
