@@ -7,9 +7,9 @@ import (
 	"net"
 	"os"
 
-	cs "github.com/libp2p/go-conn-security"
-	ci "github.com/libp2p/go-libp2p-crypto"
-	peer "github.com/libp2p/go-libp2p-peer"
+	ci "github.com/libp2p/go-libp2p-core/crypto"
+	"github.com/libp2p/go-libp2p-core/peer"
+	"github.com/libp2p/go-libp2p-core/sec"
 )
 
 // TLS 1.3 is opt-in in Go 1.12
@@ -48,10 +48,10 @@ func New(key ci.PrivKey) (*Transport, error) {
 	return t, nil
 }
 
-var _ cs.Transport = &Transport{}
+var _ sec.SecureTransport = &Transport{}
 
 // SecureInbound runs the TLS handshake as a server.
-func (t *Transport) SecureInbound(ctx context.Context, insecure net.Conn) (cs.Conn, error) {
+func (t *Transport) SecureInbound(ctx context.Context, insecure net.Conn) (sec.SecureConn, error) {
 	config, keyCh := t.identity.ConfigForAny()
 	return t.handshake(ctx, tls.Server(insecure, config), keyCh)
 }
@@ -63,7 +63,7 @@ func (t *Transport) SecureInbound(ctx context.Context, insecure net.Conn) (cs.Co
 // application data immediately afterwards.
 // If the handshake fails, the server will close the connection. The client will
 // notice this after 1 RTT when calling Read.
-func (t *Transport) SecureOutbound(ctx context.Context, insecure net.Conn, p peer.ID) (cs.Conn, error) {
+func (t *Transport) SecureOutbound(ctx context.Context, insecure net.Conn, p peer.ID) (sec.SecureConn, error) {
 	config, keyCh := t.identity.ConfigForPeer(p)
 	return t.handshake(ctx, tls.Client(insecure, config), keyCh)
 }
@@ -72,7 +72,7 @@ func (t *Transport) handshake(
 	ctx context.Context,
 	tlsConn *tls.Conn,
 	keyCh <-chan ci.PubKey,
-) (cs.Conn, error) {
+) (sec.SecureConn, error) {
 	// There's no way to pass a context to tls.Conn.Handshake().
 	// See https://github.com/golang/go/issues/18482.
 	// Close the connection instead.
@@ -117,7 +117,7 @@ func (t *Transport) handshake(
 	return conn, nil
 }
 
-func (t *Transport) setupConn(tlsConn *tls.Conn, remotePubKey ci.PubKey) (cs.Conn, error) {
+func (t *Transport) setupConn(tlsConn *tls.Conn, remotePubKey ci.PubKey) (sec.SecureConn, error) {
 	if remotePubKey == nil {
 		return nil, errors.New("go-libp2p-tls BUG: expected remote pub key to be set")
 	}

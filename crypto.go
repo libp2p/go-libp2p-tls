@@ -13,11 +13,11 @@ import (
 	"math/big"
 	"time"
 
+	crypto "github.com/libp2p/go-libp2p-crypto"
 	"golang.org/x/sys/cpu"
 
-	crypto "github.com/libp2p/go-libp2p-crypto"
-	ic "github.com/libp2p/go-libp2p-crypto"
-	peer "github.com/libp2p/go-libp2p-peer"
+	ic "github.com/libp2p/go-libp2p-core/crypto"
+	"github.com/libp2p/go-libp2p-core/peer"
 )
 
 const certValidityPeriod = 100 * 365 * 24 * time.Hour // ~100 years
@@ -133,7 +133,7 @@ func getRemotePubKey(chain []*x509.Certificate) (ic.PubKey, error) {
 	if _, err := asn1.Unmarshal(keyExt.Value, &sk); err != nil {
 		return nil, fmt.Errorf("unmarshalling signed certificate failed: %s", err)
 	}
-	pubKey, err := crypto.UnmarshalPublicKey(sk.PubKey)
+	pubKey, err := ic.UnmarshalPublicKey(sk.PubKey)
 	if err != nil {
 		return nil, fmt.Errorf("unmarshalling public key failed: %s", err)
 	}
