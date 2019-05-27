@@ -20,9 +20,10 @@ import (
 	"github.com/onsi/gomega/gbytes"
 	"github.com/onsi/gomega/types"
 
-	cs "github.com/libp2p/go-conn-security"
-	ci "github.com/libp2p/go-libp2p-crypto"
-	peer "github.com/libp2p/go-libp2p-peer"
+	ci "github.com/libp2p/go-libp2p-core/crypto"
+	"github.com/libp2p/go-libp2p-core/peer"
+	"github.com/libp2p/go-libp2p-core/sec"
+
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 )
@@ -94,7 +95,7 @@ var _ = Describe("Transport", func() {
 
 		clientInsecureConn, serverInsecureConn := connect()
 
-		serverConnChan := make(chan cs.Conn)
+		serverConnChan := make(chan sec.SecureConn)
 		go func() {
 			defer GinkgoRecover()
 			serverConn, err := serverTransport.SecureInbound(context.Background(), serverInsecureConn)
@@ -103,7 +104,7 @@ var _ = Describe("Transport", func() {
 		}()
 		clientConn, err := clientTransport.SecureOutbound(context.Background(), clientInsecureConn, serverID)
 		Expect(err).ToNot(HaveOccurred())
-		var serverConn cs.Conn
+		var serverConn sec.SecureConn
 		Eventually(serverConnChan).Should(Receive(&serverConn))
 		defer clientConn.Close()
 		defer serverConn.Close()

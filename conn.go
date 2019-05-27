@@ -3,9 +3,9 @@ package libp2ptls
 import (
 	"crypto/tls"
 
-	cs "github.com/libp2p/go-conn-security"
-	ci "github.com/libp2p/go-libp2p-crypto"
-	peer "github.com/libp2p/go-libp2p-peer"
+	ci "github.com/libp2p/go-libp2p-core/crypto"
+	"github.com/libp2p/go-libp2p-core/peer"
+	"github.com/libp2p/go-libp2p-core/sec"
 )
 
 type conn struct {
@@ -18,7 +18,7 @@ type conn struct {
 	remotePubKey ci.PubKey
 }
 
-var _ cs.Conn = &conn{}
+var _ sec.SecureConn = &conn{}
 
 func (c *conn) LocalPeer() peer.ID {
 	return c.localPeer
