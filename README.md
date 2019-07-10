@@ -29,11 +29,11 @@ or by editing your `go.mod` file as [described by the gomod documentation](https
 
 Feel free to join in. All welcome. Open an [issue](https://github.com/libp2p/go-libp2p-tls/issues)!
 
-This repository falls under the IPFS [Code of Conduct](https://github.com/libp2p/community/blob/master/code-of-conduct.md).
+This repository falls under the libp2p [Code of Conduct](https://github.com/libp2p/community/blob/master/code-of-conduct.md).
 
-### Want to hack on IPFS?
+### Want to hack on libp2p?
 
-[![](https://cdn.rawgit.com/jbenet/contribute-ipfs-gif/master/img/contribute.gif)](https://github.com/ipfs/community/blob/master/CONTRIBUTING.md)
+[![](https://cdn.rawgit.com/libp2p/community/master/img/contribute.gif)](https://github.com/libp2p/community/blob/master/CONTRIBUTE.md)
 
 ## License
 
