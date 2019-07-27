@@ -13,7 +13,6 @@ import (
 	"math/big"
 	"time"
 
-	crypto "github.com/libp2p/go-libp2p-crypto"
 	"golang.org/x/sys/cpu"
 
 	ic "github.com/libp2p/go-libp2p-core/crypto"
@@ -157,7 +156,7 @@ func keyToCertificate(sk ic.PrivKey) (*tls.Certificate, error) {
 		return nil, err
 	}
 
-	keyBytes, err := crypto.MarshalPublicKey(sk.GetPublic())
+	keyBytes, err := ic.MarshalPublicKey(sk.GetPublic())
 	if err != nil {
 		return nil, err
 	}
