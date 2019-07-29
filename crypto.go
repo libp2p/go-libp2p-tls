@@ -66,9 +66,7 @@ func (i *Identity) ConfigForAny() (*tls.Config, <-chan ic.PubKey) {
 //
 // It should be used to create a new tls.Config before securing either an
 // incoming or outgoing connection.
-func (i *Identity) ConfigForPeer(
-	remote peer.ID,
-) (*tls.Config, <-chan ic.PubKey) {
+func (i *Identity) ConfigForPeer(remote peer.ID) (*tls.Config, <-chan ic.PubKey) {
 	keyCh := make(chan ic.PubKey, 1)
 	// We need to check the peer ID in the VerifyPeerCertificate callback.
 	// The tls.Config it is also used for listening, and we might also have concurrent dials.
@@ -88,7 +86,7 @@ func (i *Identity) ConfigForPeer(
 			chain[i] = cert
 		}
 
-		pubKey, err := getRemotePubKey(chain)
+		pubKey, err := PubKeyFromCertChain(chain)
 		if err != nil {
 			return err
 		}
@@ -101,8 +99,8 @@ func (i *Identity) ConfigForPeer(
 	return conf, keyCh
 }
 
-// getRemotePubKey derives the remote's public key from the certificate chain.
-func getRemotePubKey(chain []*x509.Certificate) (ic.PubKey, error) {
+// PubKeyFromCertChain verifies the certificate chain and extract the remote's public key.
+func PubKeyFromCertChain(chain []*x509.Certificate) (ic.PubKey, error) {
 	if len(chain) != 1 {
 		return nil, errors.New("expected one certificates in the chain")
 	}
