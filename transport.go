@@ -105,6 +105,9 @@ func (t *Transport) handshake(
 	case remotePubKey = <-keyCh:
 	default:
 	}
+	if remotePubKey == nil {
+		return nil, errors.New("go-libp2p-tls BUG: expected remote pub key to be set")
+	}
 
 	conn, err := t.setupConn(tlsConn, remotePubKey)
 	if err != nil {
@@ -118,10 +121,6 @@ func (t *Transport) handshake(
 }
 
 func (t *Transport) setupConn(tlsConn *tls.Conn, remotePubKey ci.PubKey) (sec.SecureConn, error) {
-	if remotePubKey == nil {
-		return nil, errors.New("go-libp2p-tls BUG: expected remote pub key to be set")
-	}
-
 	remotePeerID, err := peer.IDFromPublicKey(remotePubKey)
 	if err != nil {
 		return nil, err
