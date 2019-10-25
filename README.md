@@ -10,7 +10,7 @@
 
 > go-libp2p's TLS encrypted transport
 
-Package `go-libp2p-tls` is a libp2p [conn security transport](https://github.com/libp2p/go-conn-security). It uses TLS to setup the communication channel.
+Package `go-libp2p-tls` is a libp2p [conn security transport](https://godoc.org/github.com/libp2p/go-libp2p-core/sec). It uses TLS to setup the communication channel.
 
 ## Install
 
