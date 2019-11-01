@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net"
 	"os"
+	"sync"
 
 	ci "github.com/libp2p/go-libp2p-core/crypto"
 	"github.com/libp2p/go-libp2p-core/peer"
@@ -81,9 +82,19 @@ func (t *Transport) handshake(
 		tlsConn.Close()
 	default:
 	}
+
 	done := make(chan struct{})
+	var wg sync.WaitGroup
+
+	// Ensure that we do not return before
+	// either being done or having a context
+	// cancellation.
+	defer wg.Wait()
 	defer close(done)
+
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		select {
 		case <-done:
 		case <-ctx.Done():
