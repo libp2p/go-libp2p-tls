@@ -54,7 +54,11 @@ var _ sec.SecureTransport = &Transport{}
 // SecureInbound runs the TLS handshake as a server.
 func (t *Transport) SecureInbound(ctx context.Context, insecure net.Conn) (sec.SecureConn, error) {
 	config, keyCh := t.identity.ConfigForAny()
-	return t.handshake(ctx, tls.Server(insecure, config), keyCh)
+	cs, err := t.handshake(ctx, tls.Server(insecure, config), keyCh)
+	if err != nil {
+		insecure.Close()
+	}
+	return cs, err
 }
 
 // SecureOutbound runs the TLS handshake as a client.
@@ -66,7 +70,11 @@ func (t *Transport) SecureInbound(ctx context.Context, insecure net.Conn) (sec.S
 // notice this after 1 RTT when calling Read.
 func (t *Transport) SecureOutbound(ctx context.Context, insecure net.Conn, p peer.ID) (sec.SecureConn, error) {
 	config, keyCh := t.identity.ConfigForPeer(p)
-	return t.handshake(ctx, tls.Client(insecure, config), keyCh)
+	cs, err := t.handshake(ctx, tls.Client(insecure, config), keyCh)
+	if err != nil {
+		insecure.Close()
+	}
+	return cs, err
 }
 
 func (t *Transport) handshake(
