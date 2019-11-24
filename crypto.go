@@ -4,6 +4,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -219,4 +220,20 @@ func preferServerCipherSuites() bool {
 		hasGCMAsm = hasGCMAsmAMD64 || hasGCMAsmARM64 || hasGCMAsmS390X
 	)
 	return !hasGCMAsm
+}
+
+// Compare two peer IDs by their SHA256 hash.
+// The result will be 0 if H(a) == H(b), -1 if H(a) < H(b), and +1 if H(a) > H(b).
+func comparePeerIDs(p1, p2 peer.ID) int {
+	p1Hash := sha256.Sum256([]byte(p1))
+	p2Hash := sha256.Sum256([]byte(p2))
+	for i := 0; i < sha256.Size; i++ {
+		if p1Hash[i] < p2Hash[i] {
+			return -1
+		}
+		if p1Hash[i] > p2Hash[i] {
+			return 1
+		}
+	}
+	return 0
 }

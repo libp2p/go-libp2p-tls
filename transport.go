@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"sync"
@@ -21,6 +22,8 @@ func init() {
 
 // ID is the protocol ID (used when negotiating with multistream)
 const ID = "/tls/1.0.0"
+
+const errMessageSimultaneousConnect = "tls: received unexpected handshake message of type *tls.clientHelloMsg when waiting for *tls.serverHelloMsg"
 
 // Transport constructs secure communication sessions for a peer.
 type Transport struct {
@@ -66,7 +69,38 @@ func (t *Transport) SecureInbound(ctx context.Context, insecure net.Conn) (sec.S
 // notice this after 1 RTT when calling Read.
 func (t *Transport) SecureOutbound(ctx context.Context, insecure net.Conn, p peer.ID) (sec.SecureConn, error) {
 	config, keyCh := t.identity.ConfigForPeer(p)
-	return t.handshake(ctx, tls.Client(insecure, config), keyCh)
+	conn, err := t.handshake(ctx, tls.Client(insecure, config), keyCh)
+	if err != nil && err.Error() == errMessageSimultaneousConnect {
+		// catch the TLS alert that's still in flight
+		config, _ = t.identity.ConfigForAny()
+		fmt.Println(p, "waiting for alert")
+		err := tls.Server(insecure, config).Handshake()
+		if err == nil || err.Error() != "remote error: tls: unexpected message" {
+			fmt.Println(err)
+			return nil, errors.New("didn't receive expected TLS alert")
+		}
+		fmt.Println(p, "received alert")
+		// Now start the next connection attempt.
+		switch comparePeerIDs(t.localPeer, p) {
+		case 0:
+			return nil, errors.New("tried to simultaneous connect to oneself")
+		case -1:
+			fmt.Println(p, "Retrying as a client")
+			// SHA256(our peer ID) is smaller than SHA256(their peer ID).
+			// We're the client in the next connection attempt.
+			config, keyCh := t.identity.ConfigForPeer(p)
+			return t.handshake(ctx, tls.Client(insecure, config), keyCh)
+		case 1:
+			fmt.Println(p, "Retrying as a server")
+			// SHA256(our peer ID) is larger than SHA256(their peer ID).
+			// We're the server in the next connection attempt.
+			config, keyCh := t.identity.ConfigForPeer(p)
+			return t.handshake(ctx, tls.Server(insecure, config), keyCh)
+		default:
+			panic("unexpected peer ID comparison result")
+		}
+	}
+	return conn, err
 }
 
 func (t *Transport) handshake(

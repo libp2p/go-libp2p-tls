@@ -15,6 +15,7 @@ import (
 	"math/big"
 	mrand "math/rand"
 	"net"
+	"reflect"
 	"time"
 
 	"github.com/onsi/gomega/gbytes"
@@ -186,6 +187,65 @@ var _ = Describe("Transport", func() {
 		_, err = clientTransport.SecureOutbound(context.Background(), clientInsecureConn, thirdPartyID)
 		Expect(err).To(MatchError("peer IDs don't match"))
 		Eventually(done).Should(BeClosed())
+	})
+
+	It("handles simultaneous open", func() {
+		// Avoid confusion regarding the naming.
+		p1, p1Key := serverID, serverKey
+		p2, p2Key := clientID, clientKey
+
+		fmt.Println("p1:", p1)
+		fmt.Println("p2:", p2)
+
+		// We use a normal dial / listen to establish the TCP connection,
+		// but we then start two clients.
+		c1raw, c2raw := connect()
+
+		c1Transport, err := New(p1Key)
+		Expect(err).ToNot(HaveOccurred())
+		c2Transport, err := New(p2Key)
+		Expect(err).ToNot(HaveOccurred())
+
+		c1ConnChan := make(chan sec.SecureConn, 1)
+		go func() {
+			defer GinkgoRecover()
+			conn, err := c1Transport.SecureOutbound(context.Background(), c1raw, p2)
+			Expect(err).ToNot(HaveOccurred())
+			c1ConnChan <- conn
+		}()
+
+		c2, err := c2Transport.SecureOutbound(context.Background(), c2raw, p1)
+		Expect(err).ToNot(HaveOccurred())
+		defer c2.Close()
+		var c1 sec.SecureConn
+		Eventually(c1ConnChan).Should(Receive(&c1))
+		defer c1.Close()
+
+		// check that the peers are in the correct roles
+		isClient := func(c sec.SecureConn) bool {
+			// the isClient field of the tls.Conn will tell us who is client and server
+			return reflect.ValueOf(c.(*conn).Conn).Elem().FieldByName("isClient").Bool()
+		}
+		switch comparePeerIDs(p1, p2) {
+		case -1:
+			// H(p1) < H(p2) => p1 acts as a client, p2 as a server
+			Expect(isClient(c1)).To(BeTrue())
+			Expect(isClient(c2)).To(BeFalse())
+		case 1:
+			// H(p1) > H(p2) => p1 acts as a server, p2 as a client
+			Expect(isClient(c1)).To(BeFalse())
+			Expect(isClient(c2)).To(BeTrue())
+		default:
+			Fail("unexpected peer comparison result")
+		}
+
+		// exchange some data
+		_, err = c1.Write([]byte("foobar"))
+		Expect(err).ToNot(HaveOccurred())
+		b := make([]byte, 6)
+		_, err = c2.Read(b)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(string(b)).To(Equal("foobar"))
 	})
 
 	Context("invalid certificates", func() {
