@@ -66,18 +66,23 @@ func (c *teeConn) Read(b []byte) (int, error) {
 }
 
 type wrappedConn struct {
+	// Before reading the first handshake message, this is a *teeConn.
+	// After reading the first handshake message, we switch it to the rawConn.
 	net.Conn
 
+	rawConn             net.Conn
 	hasReadFirstMessage bool
-	raw                 bytes.Buffer // contains a copy of every byte of the first handshake message we read from the wire
+	raw                 *bytes.Buffer // contains a copy of every byte of the first handshake message we read from the wire
 
 	hand bytes.Buffer // used to store the first handshake message until we've completely read it
-
 }
 
 func newWrappedConn(c net.Conn) net.Conn {
-	wc := &wrappedConn{}
-	wc.Conn = newTeeConn(c, &wc.raw)
+	wc := &wrappedConn{
+		raw:     &bytes.Buffer{},
+		rawConn: c,
+	}
+	wc.Conn = newTeeConn(c, wc.raw)
 	return wc
 }
 
@@ -92,6 +97,8 @@ func (c *wrappedConn) Read(b []byte) (int, error) {
 	if c.raw.Len() > 0 {
 		n, err := c.raw.Read(b)
 		if err == io.EOF || c.raw.Len() == 0 {
+			c.raw = nil
+			c.Conn = c.rawConn
 			c.hasReadFirstMessage = true
 			err = nil
 		}
