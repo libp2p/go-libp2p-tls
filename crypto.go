@@ -1,6 +1,7 @@
 package libp2ptls
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -227,13 +228,5 @@ func preferServerCipherSuites() bool {
 func comparePeerIDs(p1, p2 peer.ID) int {
 	p1Hash := sha256.Sum256([]byte(p1))
 	p2Hash := sha256.Sum256([]byte(p2))
-	for i := 0; i < sha256.Size; i++ {
-		if p1Hash[i] < p2Hash[i] {
-			return -1
-		}
-		if p1Hash[i] > p2Hash[i] {
-			return 1
-		}
-	}
-	return 0
+	return bytes.Compare(p1Hash[:], p2Hash[:])
 }
