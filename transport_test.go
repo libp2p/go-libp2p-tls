@@ -49,7 +49,7 @@ var _ = Describe("Transport", func() {
 			priv, _, err = ci.GenerateECDSAKeyPair(rand.Reader)
 		case 1:
 			fmt.Fprintf(GinkgoWriter, " using an RSA key: ")
-			priv, _, err = ci.GenerateRSAKeyPair(1024, rand.Reader)
+			priv, _, err = ci.GenerateRSAKeyPair(2048, rand.Reader)
 		case 2:
 			fmt.Fprintf(GinkgoWriter, " using an Ed25519 key: ")
 			priv, _, err = ci.GenerateEd25519Key(rand.Reader)
@@ -192,7 +192,7 @@ var _ = Describe("Transport", func() {
 		invalidateCertChain := func(identity *Identity) {
 			switch identity.config.Certificates[0].PrivateKey.(type) {
 			case *rsa.PrivateKey:
-				key, err := rsa.GenerateKey(rand.Reader, 1024)
+				key, err := rsa.GenerateKey(rand.Reader, 2048)
 				Expect(err).ToNot(HaveOccurred())
 				identity.config.Certificates[0].PrivateKey = key
 			case *ecdsa.PrivateKey:
