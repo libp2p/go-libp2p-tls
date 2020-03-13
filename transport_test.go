@@ -327,9 +327,12 @@ var _ = Describe("Transport", func() {
 
 		transforms := []transform{
 			{
-				name:      "private key used in the TLS handshake doesn't match the public key in the cert",
-				apply:     invalidateCertChain,
-				remoteErr: Equal("tls: invalid certificate signature"),
+				name:  "private key used in the TLS handshake doesn't match the public key in the cert",
+				apply: invalidateCertChain,
+				remoteErr: Or(
+					Equal("tls: invalid signature by the client certificate: ECDSA verification failure"),
+					Equal("tls: invalid signature by the server certificate: ECDSA verification failure"),
+				),
 			},
 			{
 				name:      "certificate chain contains 2 certs",
@@ -339,7 +342,7 @@ var _ = Describe("Transport", func() {
 			{
 				name:      "cert is expired",
 				apply:     expiredCert,
-				remoteErr: Equal("certificate verification failed: x509: certificate has expired or is not yet valid"),
+				remoteErr: ContainSubstring("certificate has expired or is not yet valid"),
 			},
 			{
 				name:      "cert doesn't have the key extension",

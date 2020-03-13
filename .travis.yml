@@ -1,7 +1,7 @@
 language: go
 
 go:
-  - "1.13.x"
+  - "1.14.x"
 
 # first part of the GOARCH workaround
 # setting the GOARCH directly doesn't work, since the value will be overwritten later
@@ -14,7 +14,6 @@ env:
 # now actually set the GOARCH env variable to the value of the temporary variable set earlier
 before_install:
   - |
-    export GO111MODULE=on;
     go get golang.org/x/tools/cmd/cover;
     go get github.com/onsi/ginkgo/ginkgo;
     go get github.com/onsi/gomega;
