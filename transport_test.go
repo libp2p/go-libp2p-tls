@@ -184,7 +184,8 @@ var _ = Describe("Transport", func() {
 		}()
 		// dial, but expect the wrong peer ID
 		_, err = clientTransport.SecureOutbound(context.Background(), clientInsecureConn, thirdPartyID)
-		Expect(err).To(MatchError("peer IDs don't match"))
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("peer IDs don't match"))
 		Eventually(done).Should(BeClosed())
 	})
 
