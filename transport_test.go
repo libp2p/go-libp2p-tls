@@ -378,9 +378,13 @@ var _ = Describe("Transport", func() {
 			It(fmt.Sprintf("fails if the client presents an invalid cert: %s", t.name), func() {
 				serverTransport, err := New(serverKey)
 				Expect(err).ToNot(HaveOccurred())
-				clientTransport, err := New(clientKey)
+				i, err := NewIdentity(clientKey)
 				Expect(err).ToNot(HaveOccurred())
-				t.apply(clientTransport.identity)
+				clientTransport := &Transport{
+					identity: i,
+				}
+				Expect(err).ToNot(HaveOccurred())
+				t.apply(i)
 
 				clientInsecureConn, serverInsecureConn := connect()
 
@@ -406,9 +410,13 @@ var _ = Describe("Transport", func() {
 			})
 
 			It(fmt.Sprintf("fails if the server presents an invalid cert: %s", t.name), func() {
-				serverTransport, err := New(serverKey)
+				i, err := NewIdentity(serverKey)
 				Expect(err).ToNot(HaveOccurred())
-				t.apply(serverTransport.identity)
+				serverTransport := &Transport{
+					identity: i,
+				}
+				Expect(err).ToNot(HaveOccurred())
+				t.apply(i)
 				clientTransport, err := New(clientKey)
 				Expect(err).ToNot(HaveOccurred())
 
