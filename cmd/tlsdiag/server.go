@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/libp2p/go-libp2p-core/peer"
+	"github.com/libp2p/go-libp2p-peerstore/pstoremem"
 	libp2ptls "github.com/libp2p/go-libp2p-tls"
 )
 
@@ -26,7 +27,7 @@ func StartServer() error {
 		return err
 	}
 	fmt.Printf(" Peer ID: %s\n", id.Pretty())
-	tp, err := libp2ptls.New(priv)
+	tp, err := libp2ptls.New(priv, pstoremem.NewPeerstore())
 	if err != nil {
 		return err
 	}

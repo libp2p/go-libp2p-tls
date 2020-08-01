@@ -13,7 +13,6 @@ import (
 	"encoding/asn1"
 	"fmt"
 	"math/big"
-	mrand "math/rand"
 	"net"
 	"time"
 
@@ -22,7 +21,9 @@ import (
 
 	ci "github.com/libp2p/go-libp2p-core/crypto"
 	"github.com/libp2p/go-libp2p-core/peer"
+	ps "github.com/libp2p/go-libp2p-core/peerstore"
 	"github.com/libp2p/go-libp2p-core/sec"
+	"github.com/libp2p/go-libp2p-peerstore/pstoremem"
 
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
@@ -38,12 +39,13 @@ var _ = Describe("Transport", func() {
 	var (
 		serverKey, clientKey ci.PrivKey
 		serverID, clientID   peer.ID
+		peerstore            ps.Peerstore
 	)
 
 	createPeer := func() (peer.ID, ci.PrivKey) {
 		var priv ci.PrivKey
 		var err error
-		switch mrand.Int() % 4 {
+		switch 3 % 4 {
 		case 0:
 			fmt.Fprintf(GinkgoWriter, " using an ECDSA key: ")
 			priv, _, err = ci.GenerateECDSAKeyPair(rand.Reader)
@@ -85,12 +87,13 @@ var _ = Describe("Transport", func() {
 		serverID, serverKey = createPeer()
 		fmt.Fprintf(GinkgoWriter, "Initializing a client")
 		clientID, clientKey = createPeer()
+		peerstore = pstoremem.NewPeerstore()
 	})
 
 	It("handshakes", func() {
-		clientTransport, err := New(clientKey)
+		clientTransport, err := New(clientKey, peerstore)
 		Expect(err).ToNot(HaveOccurred())
-		serverTransport, err := New(serverKey)
+		serverTransport, err := New(serverKey, peerstore)
 		Expect(err).ToNot(HaveOccurred())
 
 		clientInsecureConn, serverInsecureConn := connect()
@@ -110,12 +113,12 @@ var _ = Describe("Transport", func() {
 		defer serverConn.Close()
 		Expect(clientConn.LocalPeer()).To(Equal(clientID))
 		Expect(serverConn.LocalPeer()).To(Equal(serverID))
-		Expect(clientConn.LocalPrivateKey()).To(Equal(clientKey))
-		Expect(serverConn.LocalPrivateKey()).To(Equal(serverKey))
+		Expect(clientConn.LocalPrivateKey().Equals(clientKey)).To(BeTrue())
+		Expect(serverConn.LocalPrivateKey().Equals(serverKey)).To(BeTrue())
 		Expect(clientConn.RemotePeer()).To(Equal(serverID))
 		Expect(serverConn.RemotePeer()).To(Equal(clientID))
-		Expect(clientConn.RemotePublicKey()).To(Equal(serverKey.GetPublic()))
-		Expect(serverConn.RemotePublicKey()).To(Equal(clientKey.GetPublic()))
+		Expect(clientConn.RemotePublicKey().Equals(serverKey.GetPublic())).To(BeTrue())
+		Expect(serverConn.RemotePublicKey().Equals(clientKey.GetPublic())).To(BeTrue())
 		// exchange some data
 		_, err = serverConn.Write([]byte("foobar"))
 		Expect(err).ToNot(HaveOccurred())
@@ -125,10 +128,58 @@ var _ = Describe("Transport", func() {
 		Expect(string(b)).To(Equal("foobar"))
 	})
 
-	It("fails when the context of the outgoing connection is canceled", func() {
-		clientTransport, err := New(clientKey)
+	It("uses session resumption", func() {
+		clientTransport, err := New(clientKey, pstoremem.NewPeerstore())
 		Expect(err).ToNot(HaveOccurred())
-		serverTransport, err := New(serverKey)
+		serverTransport, err := New(serverKey, peerstore)
+		Expect(err).ToNot(HaveOccurred())
+
+		clientInsecureConn, serverInsecureConn := connect()
+		defer clientInsecureConn.Close()
+		defer serverInsecureConn.Close()
+
+		serverConnChan := make(chan sec.SecureConn)
+		go func() {
+			defer GinkgoRecover()
+			for {
+				serverConn, err := serverTransport.SecureInbound(context.Background(), serverInsecureConn)
+				if err != nil {
+					return
+				}
+				serverConnChan <- serverConn
+			}
+		}()
+
+		handshake := func() {
+			clientConn, err := clientTransport.SecureOutbound(context.Background(), clientInsecureConn, serverID)
+			Expect(err).ToNot(HaveOccurred())
+			var serverConn sec.SecureConn
+			Eventually(serverConnChan).Should(Receive(&serverConn))
+			Expect(clientConn.LocalPeer()).To(Equal(clientID))
+			Expect(serverConn.LocalPeer()).To(Equal(serverID))
+			Expect(clientConn.LocalPrivateKey().Equals(clientKey)).To(BeTrue())
+			Expect(serverConn.LocalPrivateKey().Equals(serverKey)).To(BeTrue())
+			Expect(clientConn.RemotePeer()).To(Equal(serverID))
+			Expect(serverConn.RemotePeer()).To(Equal(clientID))
+			Expect(clientConn.RemotePublicKey().Equals(serverKey.GetPublic())).To(BeTrue())
+			Expect(serverConn.RemotePublicKey().Equals(clientKey.GetPublic())).To(BeTrue())
+			// exchange some data
+			_, err = serverConn.Write([]byte("foobar"))
+			Expect(err).ToNot(HaveOccurred())
+			b := make([]byte, 6)
+			_, err = clientConn.Read(b)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(string(b)).To(Equal("foobar"))
+		}
+
+		handshake()
+		handshake()
+	})
+
+	It("fails when the context of the outgoing connection is canceled", func() {
+		clientTransport, err := New(clientKey, peerstore)
+		Expect(err).ToNot(HaveOccurred())
+		serverTransport, err := New(serverKey, peerstore)
 		Expect(err).ToNot(HaveOccurred())
 
 		clientInsecureConn, serverInsecureConn := connect()
@@ -145,9 +196,9 @@ var _ = Describe("Transport", func() {
 	})
 
 	It("fails when the context of the incoming connection is canceled", func() {
-		clientTransport, err := New(clientKey)
+		clientTransport, err := New(clientKey, peerstore)
 		Expect(err).ToNot(HaveOccurred())
-		serverTransport, err := New(serverKey)
+		serverTransport, err := New(serverKey, peerstore)
 		Expect(err).ToNot(HaveOccurred())
 
 		clientInsecureConn, serverInsecureConn := connect()
@@ -167,9 +218,9 @@ var _ = Describe("Transport", func() {
 		fmt.Fprintf(GinkgoWriter, "Creating another peer")
 		thirdPartyID, _ := createPeer()
 
-		serverTransport, err := New(serverKey)
+		serverTransport, err := New(serverKey, peerstore)
 		Expect(err).ToNot(HaveOccurred())
-		clientTransport, err := New(clientKey)
+		clientTransport, err := New(clientKey, peerstore)
 		Expect(err).ToNot(HaveOccurred())
 
 		clientInsecureConn, serverInsecureConn := connect()
@@ -376,9 +427,9 @@ var _ = Describe("Transport", func() {
 			t := transforms[i]
 
 			It(fmt.Sprintf("fails if the client presents an invalid cert: %s", t.name), func() {
-				serverTransport, err := New(serverKey)
+				serverTransport, err := New(serverKey, peerstore)
 				Expect(err).ToNot(HaveOccurred())
-				clientTransport, err := New(clientKey)
+				clientTransport, err := New(clientKey, peerstore)
 				Expect(err).ToNot(HaveOccurred())
 				t.apply(clientTransport.identity)
 
@@ -406,10 +457,10 @@ var _ = Describe("Transport", func() {
 			})
 
 			It(fmt.Sprintf("fails if the server presents an invalid cert: %s", t.name), func() {
-				serverTransport, err := New(serverKey)
+				serverTransport, err := New(serverKey, peerstore)
 				Expect(err).ToNot(HaveOccurred())
 				t.apply(serverTransport.identity)
-				clientTransport, err := New(clientKey)
+				clientTransport, err := New(clientKey, peerstore)
 				Expect(err).ToNot(HaveOccurred())
 
 				clientInsecureConn, serverInsecureConn := connect()
