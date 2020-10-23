@@ -115,4 +115,3 @@ func newCertificateConfig(sk ic.PrivKey) (*certificateConfig, error) {
 		certKey:        certKey,
 	}, nil
 }
-

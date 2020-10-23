@@ -86,7 +86,7 @@ func (o *openSSLIdentity) createOpenSSLCtx(remote peer.ID) (*openssl.Ctx,
 	opensslCtx.SetVerifyMode(openssl.VerifyPeer | openssl.VerifyFailIfNoPeerCert)
 
 	opensslCtx.SetVerifyCallback(func(preverify_ok bool,
-			store *openssl.CertificateStoreCtx) bool {
+		store *openssl.CertificateStoreCtx) bool {
 		if !preverify_ok {
 			return false // verifying the cert chain failed on this certificate
 		}
