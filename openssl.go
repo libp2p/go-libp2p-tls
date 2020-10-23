@@ -38,10 +38,6 @@ func newOpenSSLIdentity(sk ic.PrivKey) (*openSSLIdentity, error) {
 	}, nil
 }
 
-func newIdentity(sk ic.PrivKey) (identity, error) {
-	return newOpenSSLIdentity(sk)
-}
-
 // CreateServerConn creates server connection to do the tls handshake.
 func (o *openSSLIdentity) CreateServerConn(insecure net.Conn) (handshakeConn,
 	<-chan ic.PubKey, error) {
@@ -71,9 +67,14 @@ func (o *openSSLIdentity) CreateClientConn(insecure net.Conn, remote peer.ID) (h
 func (o *openSSLIdentity) createOpenSSLCtx(remote peer.ID) (*openssl.Ctx,
 	<-chan ic.PubKey, error) {
 	keyCh := make(chan ic.PubKey, 4)
-	opensslCtx, err := openssl.NewCtxWithVersion(openssl.TLSv1_2)
+	opensslCtx, err := openssl.NewCtx()
 	if err != nil {
 		return nil, nil, err
+	}
+
+	// Set minimum version to TLS 1.3
+	if !opensslCtx.SetMinProtoVersion(openssl.TLS1_3_VERSION) {
+		return nil, nil, errors.New("OpenSSL doesn't support TLS 1.3")
 	}
 
 	// Add the certificate.
@@ -82,10 +83,18 @@ func (o *openSSLIdentity) createOpenSSLCtx(remote peer.ID) (*openssl.Ctx,
 	}
 
 	// Enable two way tls.
-	opensslCtx.SetVerifyMode(openssl.VerifyPeer)
+	opensslCtx.SetVerifyMode(openssl.VerifyPeer | openssl.VerifyFailIfNoPeerCert)
 
-	opensslCtx.SetVerifyCallback(func(a bool, store *openssl.CertificateStoreCtx) bool {
+	opensslCtx.SetVerifyCallback(func(preverify_ok bool,
+			store *openssl.CertificateStoreCtx) bool {
+		if !preverify_ok {
+			return false // verifying the cert chain failed on this certificate
+		}
 		cert := store.GetCurrentCert()
+		if cert == nil {
+			fmt.Println("error: nil certificate in verify callback")
+			return false
+		}
 		pubKey, err := pubKeyFromOpenSSLCertificate(cert)
 		if err != nil {
 			return false
@@ -123,7 +132,7 @@ func pubKeyFromOpenSSLCertificate(cert *openssl.Certificate) (ic.PubKey, error) 
 	if err != nil {
 		return nil, err
 	}
-	return unmarshalExtenstionPublicKey(extValue, certKeyPub)
+	return unmarshalExtensionPublicKey(extValue, certKeyPub)
 }
 
 // createOpenSSLCertificate creates openssl certificate and returns the certificate and it's

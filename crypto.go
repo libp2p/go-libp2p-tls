@@ -46,10 +46,6 @@ func NewIdentity(privKey ic.PrivKey) (*Identity, error) {
 	}, nil
 }
 
-func newIdentity(sk ic.PrivKey) (identity, error) {
-	return NewIdentity(sk)
-}
-
 // CreateServerConn creates server connection to do the tls handshake.
 func (i *Identity) CreateServerConn(insecure net.Conn) (handshakeConn, <-chan ic.PubKey, error) {
 	config, keyCh := i.ConfigForAny()
@@ -142,7 +138,7 @@ func PubKeyFromCertChain(chain []*x509.Certificate) (ic.PubKey, error) {
 	if err != nil {
 		return nil, err
 	}
-	return unmarshalExtenstionPublicKey(keyExt.Value, certKeyPub)
+	return unmarshalExtensionPublicKey(keyExt.Value, certKeyPub)
 }
 
 func keyToCertificate(sk ic.PrivKey) (*tls.Certificate, error) {

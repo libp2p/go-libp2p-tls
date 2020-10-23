@@ -16,7 +16,7 @@ const ID = "/tls/1.0.0"
 
 // Transport constructs secure communication sessions for a peer.
 type Transport struct {
-	identity identity
+	identity *Identity
 
 	localPeer peer.ID
 	privKey   ci.PrivKey
@@ -33,7 +33,7 @@ func New(key ci.PrivKey) (*Transport, error) {
 		privKey:   key,
 	}
 
-	i, err := newIdentity(key)
+	i, err := NewIdentity(key)
 	if err != nil {
 		return nil, err
 	}

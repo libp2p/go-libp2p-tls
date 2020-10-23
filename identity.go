@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
-	"net"
 	"time"
 
 	ic "github.com/libp2p/go-libp2p-core/crypto"
@@ -45,7 +44,7 @@ func validateRemote(pubKey ic.PubKey, remote peer.ID) error {
 	return nil
 }
 
-func unmarshalExtenstionPublicKey(value []byte, certKeyPub []byte) (ic.PubKey, error) {
+func unmarshalExtensionPublicKey(value []byte, certKeyPub []byte) (ic.PubKey, error) {
 	var sk signedKey
 	if _, err := asn1.Unmarshal(value, &sk); err != nil {
 		return nil, fmt.Errorf("unmarshalling signed certificate failed: %s", err)
@@ -117,10 +116,3 @@ func newCertificateConfig(sk ic.PrivKey) (*certificateConfig, error) {
 	}, nil
 }
 
-// identity is used to secure connection.
-type identity interface {
-	// CreateServerConn creates server connection to do the tls handshake.
-	CreateServerConn(insecure net.Conn) (handshakeConn, <-chan ic.PubKey, error)
-	// CreateClientConn creates client connection to do the tls handshake.
-	CreateClientConn(insecure net.Conn, remote peer.ID) (handshakeConn, <-chan ic.PubKey, error)
-}
