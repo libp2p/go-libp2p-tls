@@ -2,7 +2,6 @@ package libp2ptls
 
 import (
 	"context"
-	"crypto/tls"
 	"errors"
 	"net"
 	"sync"
@@ -17,7 +16,7 @@ const ID = "/tls/1.0.0"
 
 // Transport constructs secure communication sessions for a peer.
 type Transport struct {
-	identity *Identity
+	identity identity
 
 	localPeer peer.ID
 	privKey   ci.PrivKey
@@ -34,11 +33,11 @@ func New(key ci.PrivKey) (*Transport, error) {
 		privKey:   key,
 	}
 
-	identity, err := NewIdentity(key)
+	i, err := newIdentity(key)
 	if err != nil {
 		return nil, err
 	}
-	t.identity = identity
+	t.identity = i
 	return t, nil
 }
 
@@ -46,8 +45,11 @@ var _ sec.SecureTransport = &Transport{}
 
 // SecureInbound runs the TLS handshake as a server.
 func (t *Transport) SecureInbound(ctx context.Context, insecure net.Conn) (sec.SecureConn, error) {
-	config, keyCh := t.identity.ConfigForAny()
-	cs, err := t.handshake(ctx, tls.Server(insecure, config), keyCh)
+	conn, keyCh, err := t.identity.CreateServerConn(insecure)
+	if err != nil {
+		return nil, err
+	}
+	cs, err := t.handshake(ctx, conn, keyCh)
 	if err != nil {
 		insecure.Close()
 	}
@@ -62,8 +64,11 @@ func (t *Transport) SecureInbound(ctx context.Context, insecure net.Conn) (sec.S
 // If the handshake fails, the server will close the connection. The client will
 // notice this after 1 RTT when calling Read.
 func (t *Transport) SecureOutbound(ctx context.Context, insecure net.Conn, p peer.ID) (sec.SecureConn, error) {
-	config, keyCh := t.identity.ConfigForPeer(p)
-	cs, err := t.handshake(ctx, tls.Client(insecure, config), keyCh)
+	conn, keyCh, err := t.identity.CreateClientConn(insecure, p)
+	if err != nil {
+		return nil, err
+	}
+	cs, err := t.handshake(ctx, conn, keyCh)
 	if err != nil {
 		insecure.Close()
 	}
@@ -72,7 +77,7 @@ func (t *Transport) SecureOutbound(ctx context.Context, insecure net.Conn, p pee
 
 func (t *Transport) handshake(
 	ctx context.Context,
-	tlsConn *tls.Conn,
+	tlsConn handshakeConn,
 	keyCh <-chan ci.PubKey,
 ) (sec.SecureConn, error) {
 	// There's no way to pass a context to tls.Conn.Handshake().
@@ -132,7 +137,7 @@ func (t *Transport) handshake(
 	return conn, nil
 }
 
-func (t *Transport) setupConn(tlsConn *tls.Conn, remotePubKey ci.PubKey) (sec.SecureConn, error) {
+func (t *Transport) setupConn(tlsConn net.Conn, remotePubKey ci.PubKey) (sec.SecureConn, error) {
 	remotePeerID, err := peer.IDFromPublicKey(remotePubKey)
 	if err != nil {
 		return nil, err
