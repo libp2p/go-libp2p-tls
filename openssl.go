@@ -20,26 +20,26 @@ var libp2pNID openssl.NID = openssl.CreateObjectIdentifier(getExtensionString(ex
 	"libp2p-tls",
 	"Object Identifier for libp2p-tls")
 
-// openSSLIdentity is used to
-type openSSLIdentity struct {
+// Identity is used to
+type Identity struct {
 	certificate *openssl.Certificate
 	privateKey  openssl.PrivateKey
 }
 
-// newOpenSSLIdentity create openSSLIdentity.
-func newOpenSSLIdentity(sk ic.PrivKey) (*openSSLIdentity, error) {
+// newOpenSSLIdentity create Identity.
+func NewIdentity(sk ic.PrivKey) (*Identity, error) {
 	cert, privKey, err := createOpenSSLCertificate(sk)
 	if err != nil {
 		return nil, err
 	}
-	return &openSSLIdentity{
+	return &Identity{
 		certificate: cert,
 		privateKey:  privKey,
 	}, nil
 }
 
 // CreateServerConn creates server connection to do the tls handshake.
-func (o *openSSLIdentity) CreateServerConn(insecure net.Conn) (handshakeConn,
+func (o *Identity) CreateServerConn(insecure net.Conn) (handshakeConn,
 	<-chan ic.PubKey, error) {
 	opensslCtx, keyCh, err := o.createOpenSSLCtx("")
 	if err := opensslCtx.UsePrivateKey(o.privateKey); err != nil {
@@ -53,7 +53,7 @@ func (o *openSSLIdentity) CreateServerConn(insecure net.Conn) (handshakeConn,
 }
 
 // CreateClientConn creates client connection to do the tls handshake.
-func (o *openSSLIdentity) CreateClientConn(insecure net.Conn, remote peer.ID) (handshakeConn,
+func (o *Identity) CreateClientConn(insecure net.Conn, remote peer.ID) (handshakeConn,
 	<-chan ic.PubKey, error) {
 	opensslCtx, keyCh, err := o.createOpenSSLCtx(remote)
 
@@ -64,7 +64,7 @@ func (o *openSSLIdentity) CreateClientConn(insecure net.Conn, remote peer.ID) (h
 	return conn, keyCh, nil
 }
 
-func (o *openSSLIdentity) createOpenSSLCtx(remote peer.ID) (*openssl.Ctx,
+func (o *Identity) createOpenSSLCtx(remote peer.ID) (*openssl.Ctx,
 	<-chan ic.PubKey, error) {
 	keyCh := make(chan ic.PubKey, 4)
 	opensslCtx, err := openssl.NewCtx()
