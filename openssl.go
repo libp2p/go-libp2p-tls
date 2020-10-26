@@ -87,12 +87,8 @@ func (o *Identity) createOpenSSLCtx(remote peer.ID) (*openssl.Ctx,
 
 	opensslCtx.SetVerifyCallback(func(preverify_ok bool,
 		store *openssl.CertificateStoreCtx) bool {
-		if !preverify_ok {
-			return false // verifying the cert chain failed on this certificate
-		}
 		cert := store.GetCurrentCert()
 		if cert == nil {
-			fmt.Println("error: nil certificate in verify callback")
 			return false
 		}
 		pubKey, err := pubKeyFromOpenSSLCertificate(cert)
