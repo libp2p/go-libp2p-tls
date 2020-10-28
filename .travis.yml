@@ -24,6 +24,7 @@ script:
   # some tests are randomized. Run them a few times.
   - for i in `seq 1 10`; do
       ginkgo -r -v --cover --randomizeAllSpecs --randomizeSuites --trace --progress;
+      ginkgo -tags openssl -r -v --cover --randomizeAllSpecs --randomizeSuites --trace --progress;
     done
 
 after_success:
