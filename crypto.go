@@ -23,6 +23,8 @@ const certValidityPeriod = 100 * 365 * 24 * time.Hour // ~100 years
 const certificatePrefix = "libp2p-tls-handshake:"
 const alpn string = "libp2p"
 
+// Object Identifier allocated by IANA to the libp2p project at Protocol Labs
+// according to the libp2p TLS specification https://github.com/libp2p/specs/blob/master/tls/tls.md
 var extensionID = getPrefixedExtensionID([]int{1, 1})
 
 type signedKey struct {
@@ -105,7 +107,7 @@ func (i *Identity) ConfigForPeer(remote peer.ID) (*tls.Config, <-chan ic.PubKey)
 	return conf, keyCh
 }
 
-// PubKeyFromCertChain verifies the certificate chain and extract the remote's public key.
+// PubKeyFromCertChain verifies the certificate chain and extract the remote peer's public key from the certificate chain
 func PubKeyFromCertChain(chain []*x509.Certificate) (ic.PubKey, error) {
 	if len(chain) != 1 {
 		return nil, errors.New("expected one certificates in the chain")
@@ -154,46 +156,88 @@ func PubKeyFromCertChain(chain []*x509.Certificate) (ic.PubKey, error) {
 	return pubKey, nil
 }
 
+// Use a private key to create an libp2p-compatible certificate
+// A compatible certificate must include an extension field associating the signing key with the certificate key
+// sk Signing key
 func keyToCertificate(sk ic.PrivKey) (*tls.Certificate, error) {
-	certKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	// Create a new private key for the new certificate
+	var certKey *ecdsa.PrivateKey
+	var err error
+	if certKey, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader); err != nil {
+		return nil, err
+	}
+
+	// Create the unsigned X509 certificate template
+	var template *x509.Certificate
+	if template, err = newUnsignedX509Cert(sk, certKey); err != nil {
+		return nil, err
+	}
+
+	// Sign the X509 certificate with the certificate key
+	return signAndCreateStdTLSCert(template, certKey)
+}
+
+// Create a standard libp2p-compatible certificate
+// sk Signing key
+func newUnsignedX509Cert(sk ic.PrivKey, certKey *ecdsa.PrivateKey) (*x509.Certificate, error) {
+	// Sign the certificate key
+	signedCertKey, err := signCertKey(sk, certKey)
 	if err != nil {
 		return nil, err
 	}
 
-	keyBytes, err := ic.MarshalPublicKey(sk.GetPublic())
-	if err != nil {
-		return nil, err
-	}
-	certKeyPub, err := x509.MarshalPKIXPublicKey(certKey.Public())
-	if err != nil {
-		return nil, err
-	}
-	signature, err := sk.Sign(append([]byte(certificatePrefix), certKeyPub...))
-	if err != nil {
-		return nil, err
-	}
-	value, err := asn1.Marshal(signedKey{
-		PubKey:    keyBytes,
-		Signature: signature,
-	})
-	if err != nil {
-		return nil, err
-	}
-
+	// Create a random serial number for the certificate
 	sn, err := rand.Int(rand.Reader, big.NewInt(1<<62))
 	if err != nil {
 		return nil, err
 	}
-	tmpl := &x509.Certificate{
+
+	// Create an unsigned libp2p-compatible X509 certificate template
+	template := &x509.Certificate{
 		SerialNumber: sn,
 		NotBefore:    time.Time{},
 		NotAfter:     time.Now().Add(certValidityPeriod),
 		// after calling CreateCertificate, these will end up in Certificate.Extensions
 		ExtraExtensions: []pkix.Extension{
-			{Id: extensionID, Value: value},
+			{Id: extensionID, Value: signedCertKey},
 		},
 	}
-	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, certKey.Public(), certKey)
+
+	return template, nil
+}
+
+// Create a signed public key from the private signing key
+// sk Signing key
+func signCertKey(sk ic.PrivKey, certKey *ecdsa.PrivateKey) ([]byte, error) {
+	// Marshal the public key
+	publicSigningKeyBytes, err := ic.MarshalPublicKey(sk.GetPublic())
+	if err != nil {
+		return nil, err
+	}
+
+	// Sign the certificate's public key with the signing key
+	certKeyPub, err := x509.MarshalPKIXPublicKey(certKey.Public())
+	if err != nil {
+		return nil, err
+	}
+	signatureOfCertKey, err := sk.Sign(append([]byte(certificatePrefix), certKeyPub...))
+	if err != nil {
+		return nil, err
+	}
+
+	// Associate the public signing key with the signature of the certificate's public key
+	// Marshal the association into a byte array
+	value, err := asn1.Marshal(signedKey{
+		PubKey:    publicSigningKeyBytes,
+		Signature: signatureOfCertKey,
+	})
+
+	return value, err
+}
+
+// Create a self-signed Certificate object from an X509 template
+func signAndCreateStdTLSCert(x509Template *x509.Certificate, certKey *ecdsa.PrivateKey) (*tls.Certificate, error) {
+	certDER, err := x509.CreateCertificate(rand.Reader, x509Template, x509Template, certKey.Public(), certKey)
 	if err != nil {
 		return nil, err
 	}

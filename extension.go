@@ -1,5 +1,7 @@
 package libp2ptls
 
+// Object Identifier allocated by IANA to the libp2p project at Protocol Labs
+// according to the libp2p TLS specification https://github.com/libp2p/specs/blob/master/tls/tls.md
 var extensionPrefix = []int{1, 3, 6, 1, 4, 1, 53594}
 
 // getPrefixedExtensionID returns an Object Identifier
