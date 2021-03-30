@@ -23,7 +23,7 @@ func StartClient() error {
 		return err
 	}
 
-	peerID, err := peer.IDB58Decode(*peerIDString)
+	peerID, err := peer.Decode(*peerIDString)
 	if err != nil {
 		return err
 	}
