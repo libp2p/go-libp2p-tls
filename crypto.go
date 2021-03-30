@@ -22,6 +22,7 @@ import (
 const certValidityPeriod = 100 * 365 * 24 * time.Hour // ~100 years
 const certificatePrefix = "libp2p-tls-handshake:"
 const alpn string = "libp2p"
+const peerStoreKey = "libp2p-tls-session-cache"
 
 var extensionID = getPrefixedExtensionID([]int{1, 1})
 
@@ -52,7 +53,7 @@ func NewIdentity(privKey ic.PrivKey) (*Identity, error) {
 				panic("tls config not specialized for peer")
 			},
 			NextProtos:             []string{alpn},
-			SessionTicketsDisabled: true,
+			SessionTicketsDisabled: false,
 		},
 	}, nil
 }
