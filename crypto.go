@@ -1,16 +1,15 @@
+// +build !openssl
+
 package libp2ptls
 
 import (
-	"crypto/ecdsa"
-	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"encoding/asn1"
 	"errors"
 	"fmt"
-	"math/big"
+	"net"
 	"time"
 
 	"golang.org/x/sys/cpu"
@@ -19,20 +18,10 @@ import (
 	"github.com/libp2p/go-libp2p-core/peer"
 )
 
-const certValidityPeriod = 100 * 365 * 24 * time.Hour // ~100 years
-const certificatePrefix = "libp2p-tls-handshake:"
-const alpn string = "libp2p"
-
-var extensionID = getPrefixedExtensionID([]int{1, 1})
-
-type signedKey struct {
-	PubKey    []byte
-	Signature []byte
-}
-
 // Identity is used to secure connections
 type Identity struct {
-	config tls.Config
+	config     tls.Config
+	privateKey ic.PrivKey
 }
 
 // NewIdentity creates a new identity
@@ -55,6 +44,21 @@ func NewIdentity(privKey ic.PrivKey) (*Identity, error) {
 			SessionTicketsDisabled: true,
 		},
 	}, nil
+}
+
+// CreateServerConn creates server connection to do the tls handshake.
+func (i *Identity) CreateServerConn(insecure net.Conn) (handshakeConn, <-chan ic.PubKey, error) {
+	config, keyCh := i.ConfigForAny()
+	conn := tls.Server(insecure, config)
+	return conn, keyCh, nil
+}
+
+// CreateClientConn creates client connection to do the tls handshake.
+func (i *Identity) CreateClientConn(insecure net.Conn, remote peer.ID) (handshakeConn,
+	<-chan ic.PubKey, error) {
+	config, keyCh := i.ConfigForPeer(remote)
+	conn := tls.Client(insecure, config)
+	return conn, keyCh, nil
 }
 
 // ConfigForAny is a short-hand for ConfigForPeer("").
@@ -92,12 +96,9 @@ func (i *Identity) ConfigForPeer(remote peer.ID) (*tls.Config, <-chan ic.PubKey)
 		if err != nil {
 			return err
 		}
-		if remote != "" && !remote.MatchesPublicKey(pubKey) {
-			peerID, err := peer.IDFromPublicKey(pubKey)
-			if err != nil {
-				peerID = peer.ID(fmt.Sprintf("(not determined: %s)", err.Error()))
-			}
-			return fmt.Errorf("peer IDs don't match: expected %s, got %s", remote, peerID)
+		err = validateRemote(pubKey, remote)
+		if err != nil {
+			return err
 		}
 		keyCh <- pubKey
 		return nil
@@ -132,74 +133,37 @@ func PubKeyFromCertChain(chain []*x509.Certificate) (ic.PubKey, error) {
 	if !found {
 		return nil, errors.New("expected certificate to contain the key extension")
 	}
-	var sk signedKey
-	if _, err := asn1.Unmarshal(keyExt.Value, &sk); err != nil {
-		return nil, fmt.Errorf("unmarshalling signed certificate failed: %s", err)
-	}
-	pubKey, err := ic.UnmarshalPublicKey(sk.PubKey)
-	if err != nil {
-		return nil, fmt.Errorf("unmarshalling public key failed: %s", err)
-	}
+
 	certKeyPub, err := x509.MarshalPKIXPublicKey(cert.PublicKey)
 	if err != nil {
 		return nil, err
 	}
-	valid, err := pubKey.Verify(append([]byte(certificatePrefix), certKeyPub...), sk.Signature)
-	if err != nil {
-		return nil, fmt.Errorf("signature verification failed: %s", err)
-	}
-	if !valid {
-		return nil, errors.New("signature invalid")
-	}
-	return pubKey, nil
+	return unmarshalExtensionPublicKey(keyExt.Value, certKeyPub)
 }
 
 func keyToCertificate(sk ic.PrivKey) (*tls.Certificate, error) {
-	certKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	config, err := newCertificateConfig(sk)
 	if err != nil {
 		return nil, err
 	}
 
-	keyBytes, err := ic.MarshalPublicKey(sk.GetPublic())
-	if err != nil {
-		return nil, err
-	}
-	certKeyPub, err := x509.MarshalPKIXPublicKey(certKey.Public())
-	if err != nil {
-		return nil, err
-	}
-	signature, err := sk.Sign(append([]byte(certificatePrefix), certKeyPub...))
-	if err != nil {
-		return nil, err
-	}
-	value, err := asn1.Marshal(signedKey{
-		PubKey:    keyBytes,
-		Signature: signature,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	sn, err := rand.Int(rand.Reader, big.NewInt(1<<62))
-	if err != nil {
-		return nil, err
-	}
 	tmpl := &x509.Certificate{
-		SerialNumber: sn,
+		SerialNumber: config.serialNumber,
 		NotBefore:    time.Time{},
 		NotAfter:     time.Now().Add(certValidityPeriod),
 		// after calling CreateCertificate, these will end up in Certificate.Extensions
 		ExtraExtensions: []pkix.Extension{
-			{Id: extensionID, Value: value},
+			{Id: extensionID, Value: config.extensionValue},
 		},
 	}
-	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, certKey.Public(), certKey)
+	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, config.certKey.Public(),
+		config.certKey)
 	if err != nil {
 		return nil, err
 	}
 	return &tls.Certificate{
 		Certificate: [][]byte{certDER},
-		PrivateKey:  certKey,
+		PrivateKey:  config.certKey,
 	}, nil
 }
 
