@@ -285,7 +285,7 @@ var _ = Describe("Transport", func() {
 		tooShortSignature := func(identity *Identity) {
 			key, _, err := ci.GenerateSecp256k1Key(rand.Reader)
 			Expect(err).ToNot(HaveOccurred())
-			keyBytes, err := key.GetPublic().Bytes()
+			keyBytes, err := ci.MarshalPublicKey(key.GetPublic())
 			Expect(err).ToNot(HaveOccurred())
 			data, err := asn1.Marshal(signedKey{
 				PubKey:    keyBytes,
@@ -306,7 +306,7 @@ var _ = Describe("Transport", func() {
 		invalidSignature := func(identity *Identity) {
 			key, _, err := ci.GenerateSecp256k1Key(rand.Reader)
 			Expect(err).ToNot(HaveOccurred())
-			keyBytes, err := key.GetPublic().Bytes()
+			keyBytes, err := ci.MarshalPublicKey(key.GetPublic())
 			Expect(err).ToNot(HaveOccurred())
 			signature, err := key.Sign([]byte("foobar"))
 			Expect(err).ToNot(HaveOccurred())
