@@ -87,42 +87,50 @@ var _ = Describe("Transport", func() {
 		clientID, clientKey = createPeer()
 	})
 
-	It("handshakes", func() {
-		clientTransport, err := New(clientKey)
-		Expect(err).ToNot(HaveOccurred())
-		serverTransport, err := New(serverKey)
-		Expect(err).ToNot(HaveOccurred())
+	Context("successful handshakes", func() {
+		for _, critical := range []bool{true, false} {
+			crit := critical
 
-		clientInsecureConn, serverInsecureConn := connect()
+			It(fmt.Sprintf("handshakes, extension critical: %t", crit), func() {
+				extensionCritical = crit
+				defer func() { extensionCritical = false }()
+				clientTransport, err := New(clientKey)
+				Expect(err).ToNot(HaveOccurred())
+				serverTransport, err := New(serverKey)
+				Expect(err).ToNot(HaveOccurred())
 
-		serverConnChan := make(chan sec.SecureConn)
-		go func() {
-			defer GinkgoRecover()
-			serverConn, err := serverTransport.SecureInbound(context.Background(), serverInsecureConn)
-			Expect(err).ToNot(HaveOccurred())
-			serverConnChan <- serverConn
-		}()
-		clientConn, err := clientTransport.SecureOutbound(context.Background(), clientInsecureConn, serverID)
-		Expect(err).ToNot(HaveOccurred())
-		var serverConn sec.SecureConn
-		Eventually(serverConnChan).Should(Receive(&serverConn))
-		defer clientConn.Close()
-		defer serverConn.Close()
-		Expect(clientConn.LocalPeer()).To(Equal(clientID))
-		Expect(serverConn.LocalPeer()).To(Equal(serverID))
-		Expect(clientConn.LocalPrivateKey()).To(Equal(clientKey))
-		Expect(serverConn.LocalPrivateKey()).To(Equal(serverKey))
-		Expect(clientConn.RemotePeer()).To(Equal(serverID))
-		Expect(serverConn.RemotePeer()).To(Equal(clientID))
-		Expect(clientConn.RemotePublicKey()).To(Equal(serverKey.GetPublic()))
-		Expect(serverConn.RemotePublicKey()).To(Equal(clientKey.GetPublic()))
-		// exchange some data
-		_, err = serverConn.Write([]byte("foobar"))
-		Expect(err).ToNot(HaveOccurred())
-		b := make([]byte, 6)
-		_, err = clientConn.Read(b)
-		Expect(err).ToNot(HaveOccurred())
-		Expect(string(b)).To(Equal("foobar"))
+				clientInsecureConn, serverInsecureConn := connect()
+
+				serverConnChan := make(chan sec.SecureConn)
+				go func() {
+					defer GinkgoRecover()
+					serverConn, err := serverTransport.SecureInbound(context.Background(), serverInsecureConn)
+					Expect(err).ToNot(HaveOccurred())
+					serverConnChan <- serverConn
+				}()
+				clientConn, err := clientTransport.SecureOutbound(context.Background(), clientInsecureConn, serverID)
+				Expect(err).ToNot(HaveOccurred())
+				var serverConn sec.SecureConn
+				Eventually(serverConnChan).Should(Receive(&serverConn))
+				defer clientConn.Close()
+				defer serverConn.Close()
+				Expect(clientConn.LocalPeer()).To(Equal(clientID))
+				Expect(serverConn.LocalPeer()).To(Equal(serverID))
+				Expect(clientConn.LocalPrivateKey()).To(Equal(clientKey))
+				Expect(serverConn.LocalPrivateKey()).To(Equal(serverKey))
+				Expect(clientConn.RemotePeer()).To(Equal(serverID))
+				Expect(serverConn.RemotePeer()).To(Equal(clientID))
+				Expect(clientConn.RemotePublicKey()).To(Equal(serverKey.GetPublic()))
+				Expect(serverConn.RemotePublicKey()).To(Equal(clientKey.GetPublic()))
+				// exchange some data
+				_, err = serverConn.Write([]byte("foobar"))
+				Expect(err).ToNot(HaveOccurred())
+				b := make([]byte, 6)
+				_, err = clientConn.Read(b)
+				Expect(err).ToNot(HaveOccurred())
+				Expect(string(b)).To(Equal("foobar"))
+			})
+		}
 	})
 
 	It("fails when the context of the outgoing connection is canceled", func() {
@@ -243,6 +251,9 @@ var _ = Describe("Transport", func() {
 				SerialNumber: big.NewInt(1),
 				NotBefore:    time.Now().Add(-time.Hour),
 				NotAfter:     time.Now().Add(-time.Minute),
+				ExtraExtensions: []pkix.Extension{
+					{Id: extensionID, Value: []byte("foobar")},
+				},
 			})
 			identity.config.Certificates = []tls.Certificate{cert}
 		}
