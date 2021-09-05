@@ -223,7 +223,7 @@ var _ = Describe("Transport", func() {
 			Expect(err).ToNot(HaveOccurred())
 			cert1, err := x509.ParseCertificate(cert1DER)
 			Expect(err).ToNot(HaveOccurred())
-			cert2DER, err := x509.CreateCertificate(rand.Reader, tmpl, cert1, key2.Public(), key2)
+			cert2DER, err := x509.CreateCertificate(rand.Reader, tmpl, cert1, key2.Public(), key1)
 			Expect(err).ToNot(HaveOccurred())
 			identity.config.Certificates = []tls.Certificate{{
 				Certificate: [][]byte{cert2DER, cert1DER},
