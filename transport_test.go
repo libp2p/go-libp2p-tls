@@ -17,15 +17,14 @@ import (
 	"net"
 	"time"
 
-	"github.com/onsi/gomega/gbytes"
-	"github.com/onsi/gomega/types"
-
 	ci "github.com/libp2p/go-libp2p-core/crypto"
 	"github.com/libp2p/go-libp2p-core/peer"
 	"github.com/libp2p/go-libp2p-core/sec"
 
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
+	"github.com/onsi/gomega/gbytes"
+	"github.com/onsi/gomega/types"
 )
 
 type transform struct {
@@ -104,7 +103,7 @@ var _ = Describe("Transport", func() {
 				serverConnChan := make(chan sec.SecureConn)
 				go func() {
 					defer GinkgoRecover()
-					serverConn, err := serverTransport.SecureInbound(context.Background(), serverInsecureConn)
+					serverConn, err := serverTransport.SecureInbound(context.Background(), serverInsecureConn, "")
 					Expect(err).ToNot(HaveOccurred())
 					serverConnChan <- serverConn
 				}()
@@ -120,8 +119,8 @@ var _ = Describe("Transport", func() {
 				Expect(serverConn.LocalPrivateKey()).To(Equal(serverKey))
 				Expect(clientConn.RemotePeer()).To(Equal(serverID))
 				Expect(serverConn.RemotePeer()).To(Equal(clientID))
-				Expect(clientConn.RemotePublicKey()).To(Equal(serverKey.GetPublic()))
-				Expect(serverConn.RemotePublicKey()).To(Equal(clientKey.GetPublic()))
+				Expect(ci.KeyEqual(clientConn.RemotePublicKey(), serverKey.GetPublic())).To(BeTrue())
+				Expect(ci.KeyEqual(serverConn.RemotePublicKey(), clientKey.GetPublic())).To(BeTrue())
 				// exchange some data
 				_, err = serverConn.Write([]byte("foobar"))
 				Expect(err).ToNot(HaveOccurred())
@@ -143,7 +142,7 @@ var _ = Describe("Transport", func() {
 
 		go func() {
 			defer GinkgoRecover()
-			_, err := serverTransport.SecureInbound(context.Background(), serverInsecureConn)
+			_, err := serverTransport.SecureInbound(context.Background(), serverInsecureConn, "")
 			Expect(err).To(HaveOccurred())
 		}()
 		ctx, cancel := context.WithCancel(context.Background())
@@ -164,37 +163,94 @@ var _ = Describe("Transport", func() {
 			defer GinkgoRecover()
 			ctx, cancel := context.WithCancel(context.Background())
 			cancel()
-			_, err := serverTransport.SecureInbound(ctx, serverInsecureConn)
+			_, err := serverTransport.SecureInbound(ctx, serverInsecureConn, "")
 			Expect(err).To(MatchError(context.Canceled))
 		}()
 		_, err = clientTransport.SecureOutbound(context.Background(), clientInsecureConn, serverID)
 		Expect(err).To(HaveOccurred())
 	})
 
-	It("fails if the peer ID doesn't match", func() {
-		fmt.Fprintf(GinkgoWriter, "Creating another peer")
-		thirdPartyID, _ := createPeer()
+	Context("peer ID checks", func() {
+		It("succeeds when the server checks the client's ID", func() {
+			serverTransport, err := New(serverKey)
+			Expect(err).ToNot(HaveOccurred())
+			clientTransport, err := New(clientKey)
+			Expect(err).ToNot(HaveOccurred())
 
-		serverTransport, err := New(serverKey)
-		Expect(err).ToNot(HaveOccurred())
-		clientTransport, err := New(clientKey)
-		Expect(err).ToNot(HaveOccurred())
+			clientInsecureConn, serverInsecureConn := connect()
+			done := make(chan struct{})
+			go func() {
+				defer GinkgoRecover()
+				defer close(done)
+				conn, err := serverTransport.SecureInbound(context.Background(), serverInsecureConn, clientID)
+				Expect(err).ToNot(HaveOccurred())
+				Expect(conn.RemotePeer()).To(Equal(clientID))
+				b := make([]byte, 6)
+				_, err = conn.Read(b)
+				Expect(err).ToNot(HaveOccurred())
+				Expect(string(b)).To(Equal("foobar"))
+			}()
+			conn, err := clientTransport.SecureOutbound(context.Background(), clientInsecureConn, serverID)
+			Expect(err).ToNot(HaveOccurred())
+			defer conn.Close()
+			_, err = conn.Write([]byte("foobar"))
+			Expect(err).ToNot(HaveOccurred())
+			Expect(conn.RemotePeer()).To(Equal(serverID))
+			Eventually(done).Should(BeClosed())
+		})
 
-		clientInsecureConn, serverInsecureConn := connect()
+		It("fails if the peer ID doesn't match, for outgoing connections", func() {
+			fmt.Fprintf(GinkgoWriter, "Creating another peer")
+			thirdPartyID, _ := createPeer()
 
-		done := make(chan struct{})
-		go func() {
-			defer GinkgoRecover()
-			_, err := serverTransport.SecureInbound(context.Background(), serverInsecureConn)
+			serverTransport, err := New(serverKey)
+			Expect(err).ToNot(HaveOccurred())
+			clientTransport, err := New(clientKey)
+			Expect(err).ToNot(HaveOccurred())
+
+			clientInsecureConn, serverInsecureConn := connect()
+
+			done := make(chan struct{})
+			go func() {
+				defer GinkgoRecover()
+				defer close(done)
+				_, err := serverTransport.SecureInbound(context.Background(), serverInsecureConn, "")
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("tls: bad certificate"))
+			}()
+			// dial, but expect the wrong peer ID
+			_, err = clientTransport.SecureOutbound(context.Background(), clientInsecureConn, thirdPartyID)
 			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("tls: bad certificate"))
-			close(done)
-		}()
-		// dial, but expect the wrong peer ID
-		_, err = clientTransport.SecureOutbound(context.Background(), clientInsecureConn, thirdPartyID)
-		Expect(err).To(HaveOccurred())
-		Expect(err.Error()).To(ContainSubstring("peer IDs don't match"))
-		Eventually(done).Should(BeClosed())
+			Expect(err.Error()).To(ContainSubstring("peer IDs don't match"))
+			Eventually(done).Should(BeClosed())
+		})
+
+		It("fails if the peer ID doesn't match, for incoming connections", func() {
+			fmt.Fprintf(GinkgoWriter, "Creating another peer")
+			thirdPartyID, _ := createPeer()
+
+			serverTransport, err := New(serverKey)
+			Expect(err).ToNot(HaveOccurred())
+			clientTransport, err := New(clientKey)
+			Expect(err).ToNot(HaveOccurred())
+
+			clientInsecureConn, serverInsecureConn := connect()
+
+			done := make(chan struct{})
+			go func() {
+				defer GinkgoRecover()
+				defer close(done)
+				conn, err := clientTransport.SecureOutbound(context.Background(), clientInsecureConn, serverID)
+				Expect(err).ToNot(HaveOccurred())
+				_, err = conn.Read([]byte{0})
+				Expect(err.Error()).To(ContainSubstring("tls: bad certificate"))
+			}()
+			// accept connection, but expect the wrong peer ID
+			_, err = serverTransport.SecureInbound(context.Background(), serverInsecureConn, thirdPartyID)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("peer IDs don't match"))
+			Eventually(done).Should(BeClosed())
+		})
 	})
 
 	Context("invalid certificates", func() {
@@ -398,7 +454,7 @@ var _ = Describe("Transport", func() {
 				done := make(chan struct{})
 				go func() {
 					defer GinkgoRecover()
-					_, err := serverTransport.SecureInbound(context.Background(), serverInsecureConn)
+					_, err := serverTransport.SecureInbound(context.Background(), serverInsecureConn, "")
 					Expect(err).To(HaveOccurred())
 					Expect(err.Error()).To(t.remoteErr)
 					close(done)
@@ -428,7 +484,7 @@ var _ = Describe("Transport", func() {
 				done := make(chan struct{})
 				go func() {
 					defer GinkgoRecover()
-					_, err := serverTransport.SecureInbound(context.Background(), serverInsecureConn)
+					_, err := serverTransport.SecureInbound(context.Background(), serverInsecureConn, "")
 					Expect(err).To(HaveOccurred())
 					Expect(err.Error()).To(ContainSubstring("remote error: tls:"))
 					close(done)

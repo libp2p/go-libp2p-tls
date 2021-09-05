@@ -58,11 +58,6 @@ func NewIdentity(privKey ic.PrivKey) (*Identity, error) {
 	}, nil
 }
 
-// ConfigForAny is a short-hand for ConfigForPeer("").
-func (i *Identity) ConfigForAny() (*tls.Config, <-chan ic.PubKey) {
-	return i.ConfigForPeer("")
-}
-
 // ConfigForPeer creates a new single-use tls.Config that verifies the peer's
 // certificate chain and returns the peer's public key via the channel. If the
 // peer ID is empty, the returned config will accept any peer.
