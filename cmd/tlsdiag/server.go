@@ -56,7 +56,7 @@ func StartServer() error {
 func handleConn(tp *libp2ptls.Transport, conn net.Conn) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	sconn, err := tp.SecureInbound(ctx, conn)
+	sconn, err := tp.SecureInbound(ctx, conn, "")
 	if err != nil {
 		return err
 	}
