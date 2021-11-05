@@ -1,6 +1,7 @@
 package libp2ptls
 
 import (
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -38,7 +39,12 @@ type Identity struct {
 
 // NewIdentity creates a new identity
 func NewIdentity(privKey ic.PrivKey) (*Identity, error) {
-	cert, err := keyToCertificate(privKey)
+	certTmpl, err := defaultCertTemplate()
+	if err != nil {
+		return nil, err
+	}
+
+	cert, err := KeyToCertificate(privKey, certTmpl)
 	if err != nil {
 		return nil, err
 	}
@@ -157,17 +163,15 @@ func PubKeyFromCertChain(chain []*x509.Certificate) (ic.PubKey, error) {
 	return pubKey, nil
 }
 
-func keyToCertificate(sk ic.PrivKey) (*tls.Certificate, error) {
-	certKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return nil, err
-	}
-
+// GenerateSignedExtension uses the provided private key to sign the public key, and returns the
+// signature within a pkix.Extension.
+// This extension is included in a certificate to cryptographically tie it to the libp2p private key.
+func GenerateSignedExtension(sk ic.PrivKey, pubKey crypto.PublicKey) (*pkix.Extension, error) {
 	keyBytes, err := ic.MarshalPublicKey(sk.GetPublic())
 	if err != nil {
 		return nil, err
 	}
-	certKeyPub, err := x509.MarshalPKIXPublicKey(certKey.Public())
+	certKeyPub, err := x509.MarshalPKIXPublicKey(pubKey)
 	if err != nil {
 		return nil, err
 	}
@@ -183,28 +187,26 @@ func keyToCertificate(sk ic.PrivKey) (*tls.Certificate, error) {
 		return nil, err
 	}
 
-	bigNum := big.NewInt(1 << 62)
-	sn, err := rand.Int(rand.Reader, bigNum)
+	return &pkix.Extension{Id: extensionID, Critical: extensionCritical, Value: value}, nil
+}
+
+// KeyToCertificate generates a new ECDSA private key and corresponding x509 certificate.
+// The certificate includes an extension that cryptographically ties it to the provided libp2p
+// private key to authenticate TLS connections.
+func KeyToCertificate(sk ic.PrivKey, certTmpl *x509.Certificate) (*tls.Certificate, error) {
+	certKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return nil, err
 	}
-	subjectSN, err := rand.Int(rand.Reader, bigNum)
+
+	// after calling CreateCertificate, these will end up in Certificate.Extensions
+	extension, err := GenerateSignedExtension(sk, certKey.Public())
 	if err != nil {
 		return nil, err
 	}
-	tmpl := &x509.Certificate{
-		SerialNumber: sn,
-		NotBefore:    time.Now().Add(-time.Hour),
-		NotAfter:     time.Now().Add(certValidityPeriod),
-		// According to RFC 3280, the issuer field must be set,
-		// see https://datatracker.ietf.org/doc/html/rfc3280#section-4.1.2.4.
-		Subject: pkix.Name{SerialNumber: subjectSN.String()},
-		// after calling CreateCertificate, these will end up in Certificate.Extensions
-		ExtraExtensions: []pkix.Extension{
-			{Id: extensionID, Critical: extensionCritical, Value: value},
-		},
-	}
-	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, certKey.Public(), certKey)
+	certTmpl.ExtraExtensions = append(certTmpl.ExtraExtensions, *extension)
+
+	certDER, err := x509.CreateCertificate(rand.Reader, certTmpl, certTmpl, certKey.Public(), certKey)
 	if err != nil {
 		return nil, err
 	}
@@ -214,12 +216,34 @@ func keyToCertificate(sk ic.PrivKey) (*tls.Certificate, error) {
 	}, nil
 }
 
+func defaultCertTemplate() (*x509.Certificate, error) {
+	bigNum := big.NewInt(1 << 62)
+	sn, err := rand.Int(rand.Reader, bigNum)
+	if err != nil {
+		return nil, err
+	}
+
+	subjectSN, err := rand.Int(rand.Reader, bigNum)
+	if err != nil {
+		return nil, err
+	}
+
+	return &x509.Certificate{
+		SerialNumber: sn,
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(certValidityPeriod),
+		// According to RFC 3280, the issuer field must be set,
+		// see https://datatracker.ietf.org/doc/html/rfc3280#section-4.1.2.4.
+		Subject: pkix.Name{SerialNumber: subjectSN.String()},
+	}, nil
+}
+
 // We want nodes without AES hardware (e.g. ARM) support to always use ChaCha.
 // Only if both nodes have AES hardware support (e.g. x86), AES should be used.
 // x86->x86: AES, ARM->x86: ChaCha, x86->ARM: ChaCha and ARM->ARM: Chacha
 // This function returns true if we don't have AES hardware support, and false otherwise.
 // Thus, ARM servers will always use their own cipher suite preferences (ChaCha first),
-// and x86 servers will aways use the client's cipher suite preferences.
+// and x86 servers will always use the client's cipher suite preferences.
 func preferServerCipherSuites() bool {
 	// Copied from the Go TLS implementation.
 
