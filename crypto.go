@@ -194,7 +194,7 @@ func keyToCertificate(sk ic.PrivKey) (*tls.Certificate, error) {
 	}
 	tmpl := &x509.Certificate{
 		SerialNumber: sn,
-		NotBefore:    time.Time{},
+		NotBefore:    time.Now().Add(-time.Hour),
 		NotAfter:     time.Now().Add(certValidityPeriod),
 		// According to RFC 3280, the issuer field must be set,
 		// see https://datatracker.ietf.org/doc/html/rfc3280#section-4.1.2.4.
