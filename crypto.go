@@ -183,14 +183,22 @@ func keyToCertificate(sk ic.PrivKey) (*tls.Certificate, error) {
 		return nil, err
 	}
 
-	sn, err := rand.Int(rand.Reader, big.NewInt(1<<62))
+	bigNum := big.NewInt(1 << 62)
+	sn, err := rand.Int(rand.Reader, bigNum)
+	if err != nil {
+		return nil, err
+	}
+	subjectSN, err := rand.Int(rand.Reader, bigNum)
 	if err != nil {
 		return nil, err
 	}
 	tmpl := &x509.Certificate{
 		SerialNumber: sn,
-		NotBefore:    time.Time{},
+		NotBefore:    time.Now().Add(-time.Hour),
 		NotAfter:     time.Now().Add(certValidityPeriod),
+		// According to RFC 3280, the issuer field must be set,
+		// see https://datatracker.ietf.org/doc/html/rfc3280#section-4.1.2.4.
+		Subject: pkix.Name{SerialNumber: subjectSN.String()},
 		// after calling CreateCertificate, these will end up in Certificate.Extensions
 		ExtraExtensions: []pkix.Extension{
 			{Id: extensionID, Critical: extensionCritical, Value: value},
