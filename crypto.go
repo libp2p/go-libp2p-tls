@@ -1,9 +1,11 @@
 package libp2ptls
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -234,4 +236,12 @@ func preferServerCipherSuites() bool {
 		hasGCMAsm = hasGCMAsmAMD64 || hasGCMAsmARM64 || hasGCMAsmS390X
 	)
 	return !hasGCMAsm
+}
+
+// Compare two peer IDs by their SHA256 hash.
+// The result will be 0 if H(a) == H(b), -1 if H(a) < H(b), and +1 if H(a) > H(b).
+func comparePeerIDs(p1, p2 peer.ID) int {
+	p1Hash := sha256.Sum256([]byte(p1))
+	p2Hash := sha256.Sum256([]byte(p2))
+	return bytes.Compare(p1Hash[:], p2Hash[:])
 }

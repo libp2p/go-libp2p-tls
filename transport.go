@@ -64,11 +64,28 @@ func (t *Transport) SecureInbound(ctx context.Context, insecure net.Conn, p peer
 // notice this after 1 RTT when calling Read.
 func (t *Transport) SecureOutbound(ctx context.Context, insecure net.Conn, p peer.ID) (sec.SecureConn, error) {
 	config, keyCh := t.identity.ConfigForPeer(p)
-	cs, err := t.handshake(ctx, tls.Client(insecure, config), keyCh)
-	if err != nil {
+	conn, err := t.handshake(ctx, tls.Client(newWrappedConn(insecure), config), keyCh)
+	if err == errSimultaneousConnect {
+		switch comparePeerIDs(t.localPeer, p) {
+		case 0:
+			return nil, errors.New("tried to simultaneous connect to oneself")
+		case -1:
+			// SHA256(our peer ID) is smaller than SHA256(their peer ID).
+			// We're the client in the next connection attempt.
+			config, keyCh := t.identity.ConfigForPeer(p)
+			return t.handshake(ctx, tls.Client(insecure, config), keyCh)
+		case 1:
+			// SHA256(our peer ID) is larger than SHA256(their peer ID).
+			// We're the server in the next connection attempt.
+			config, keyCh := t.identity.ConfigForPeer(p)
+			return t.handshake(ctx, tls.Server(insecure, config), keyCh)
+		default:
+			panic("unexpected peer ID comparison result")
+		}
+	} else if err != nil {
 		insecure.Close()
 	}
-	return cs, err
+	return conn, err
 }
 
 func (t *Transport) handshake(
