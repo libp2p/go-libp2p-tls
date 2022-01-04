@@ -20,11 +20,6 @@ Package `go-libp2p-tls` is a libp2p [conn security transport](https://godoc.org/
 go get github.com/libp2p/go-libp2p-tls
 ```
 
-This repo is [gomod](https://github.com/golang/go/wiki/Modules)-compatible, and users of
-go 1.11 and later with modules enabled will automatically pull the latest tagged release
-by referencing this package. Upgrades to future releases can be managed using `go get`,
-or by editing your `go.mod` file as [described by the gomod documentation](https://github.com/golang/go/wiki/Modules#how-to-upgrade-and-downgrade-dependencies).
-
 ## Contribute
 
 Feel free to join in. All welcome. Open an [issue](https://github.com/libp2p/go-libp2p-tls/issues)!
