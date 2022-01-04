@@ -1,19 +1,18 @@
 package libp2ptls
 
 import (
-	. "github.com/onsi/ginkgo"
-	. "github.com/onsi/gomega"
+	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
-var _ = Describe("Extensions", func() {
-	It("generates a prefixed extension ID", func() {
-		Expect(getPrefixedExtensionID([]int{13, 37})).To(Equal([]int{1, 3, 6, 1, 4, 1, 53594, 13, 37}))
-	})
+func TestExtensionGenerating(t *testing.T) {
+	require.Equal(t, getPrefixedExtensionID([]int{13, 37}), []int{1, 3, 6, 1, 4, 1, 53594, 13, 37})
+}
 
-	It("compares extension IDs", func() {
-		Expect(extensionIDEqual([]int{1, 2, 3, 4}, []int{1, 2, 3, 4})).To(BeTrue())
-		Expect(extensionIDEqual([]int{1, 2, 3, 4}, []int{1, 2, 3})).To(BeFalse())
-		Expect(extensionIDEqual([]int{1, 2, 3}, []int{1, 2, 3, 4})).To(BeFalse())
-		Expect(extensionIDEqual([]int{1, 2, 3, 4}, []int{4, 3, 2, 1})).To(BeFalse())
-	})
-})
+func TestExtensionComparison(t *testing.T) {
+	require.True(t, extensionIDEqual([]int{1, 2, 3, 4}, []int{1, 2, 3, 4}))
+	require.False(t, extensionIDEqual([]int{1, 2, 3, 4}, []int{1, 2, 3}))
+	require.False(t, extensionIDEqual([]int{1, 2, 3}, []int{1, 2, 3, 4}))
+	require.False(t, extensionIDEqual([]int{1, 2, 3, 4}, []int{4, 3, 2, 1}))
+}
