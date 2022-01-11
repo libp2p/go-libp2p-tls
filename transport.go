@@ -7,7 +7,7 @@ import (
 	"net"
 	"sync"
 
-	ci "github.com/libp2p/go-libp2p-core/crypto"
+	"github.com/libp2p/go-libp2p-core/crypto"
 	"github.com/libp2p/go-libp2p-core/peer"
 	"github.com/libp2p/go-libp2p-core/sec"
 )
@@ -20,11 +20,11 @@ type Transport struct {
 	identity *Identity
 
 	localPeer peer.ID
-	privKey   ci.PrivKey
+	privKey   crypto.PrivKey
 }
 
 // New creates a TLS encrypted transport
-func New(key ci.PrivKey) (*Transport, error) {
+func New(key crypto.PrivKey) (*Transport, error) {
 	id, err := peer.IDFromPrivateKey(key)
 	if err != nil {
 		return nil, err
@@ -47,8 +47,12 @@ var _ sec.SecureTransport = &Transport{}
 // SecureInbound runs the TLS handshake as a server.
 // If p is empty, connections from any peer are accepted.
 func (t *Transport) SecureInbound(ctx context.Context, insecure net.Conn, p peer.ID) (sec.SecureConn, error) {
-	config, keyCh := t.identity.ConfigForPeer(p)
-	cs, err := t.handshake(ctx, tls.Server(insecure, config), keyCh)
+	var pubkey crypto.PubKey
+	config := t.identity.ConfigForPeer(p, func(k crypto.PubKey) error {
+		pubkey = k
+		return nil
+	})
+	cs, err := t.handshake(ctx, tls.Server(insecure, config), &pubkey)
 	if err != nil {
 		insecure.Close()
 	}
@@ -63,19 +67,19 @@ func (t *Transport) SecureInbound(ctx context.Context, insecure net.Conn, p peer
 // If the handshake fails, the server will close the connection. The client will
 // notice this after 1 RTT when calling Read.
 func (t *Transport) SecureOutbound(ctx context.Context, insecure net.Conn, p peer.ID) (sec.SecureConn, error) {
-	config, keyCh := t.identity.ConfigForPeer(p)
-	cs, err := t.handshake(ctx, tls.Client(insecure, config), keyCh)
+	var pubkey crypto.PubKey
+	config := t.identity.ConfigForPeer(p, func(k crypto.PubKey) error {
+		pubkey = k
+		return nil
+	})
+	cs, err := t.handshake(ctx, tls.Client(insecure, config), &pubkey)
 	if err != nil {
 		insecure.Close()
 	}
 	return cs, err
 }
 
-func (t *Transport) handshake(
-	ctx context.Context,
-	tlsConn *tls.Conn,
-	keyCh <-chan ci.PubKey,
-) (sec.SecureConn, error) {
+func (t *Transport) handshake(ctx context.Context, tlsConn *tls.Conn, pubKey *crypto.PubKey) (sec.SecureConn, error) {
 	// There's no way to pass a context to tls.Conn.Handshake().
 	// See https://github.com/golang/go/issues/18482.
 	// Close the connection instead.
@@ -113,16 +117,11 @@ func (t *Transport) handshake(
 	}
 
 	// Should be ready by this point, don't block.
-	var remotePubKey ci.PubKey
-	select {
-	case remotePubKey = <-keyCh:
-	default:
-	}
-	if remotePubKey == nil {
+	if *pubKey == nil {
 		return nil, errors.New("go-libp2p-tls BUG: expected remote pub key to be set")
 	}
 
-	conn, err := t.setupConn(tlsConn, remotePubKey)
+	conn, err := t.setupConn(tlsConn, *pubKey)
 	if err != nil {
 		// if the context was canceled, return the context error
 		if ctxErr := ctx.Err(); ctxErr != nil {
@@ -133,7 +132,7 @@ func (t *Transport) handshake(
 	return conn, nil
 }
 
-func (t *Transport) setupConn(tlsConn *tls.Conn, remotePubKey ci.PubKey) (sec.SecureConn, error) {
+func (t *Transport) setupConn(tlsConn *tls.Conn, remotePubKey crypto.PubKey) (sec.SecureConn, error) {
 	remotePeerID, err := peer.IDFromPublicKey(remotePubKey)
 	if err != nil {
 		return nil, err

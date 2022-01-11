@@ -15,7 +15,7 @@ import (
 
 	"golang.org/x/sys/cpu"
 
-	ic "github.com/libp2p/go-libp2p-core/crypto"
+	"github.com/libp2p/go-libp2p-core/crypto"
 	"github.com/libp2p/go-libp2p-core/peer"
 )
 
@@ -37,7 +37,7 @@ type Identity struct {
 }
 
 // NewIdentity creates a new identity
-func NewIdentity(privKey ic.PrivKey) (*Identity, error) {
+func NewIdentity(privKey crypto.PrivKey) (*Identity, error) {
 	cert, err := keyToCertificate(privKey)
 	if err != nil {
 		return nil, err
@@ -59,13 +59,13 @@ func NewIdentity(privKey ic.PrivKey) (*Identity, error) {
 }
 
 // ConfigForPeer creates a new single-use tls.Config that verifies the peer's
-// certificate chain and returns the peer's public key via the channel. If the
-// peer ID is empty, the returned config will accept any peer.
+// certificate chain. The callback can be used to run additional logic on the peer's
+// certificate. If it returns an error, the handshake will fail.
+// If the peer ID is empty, the returned config will accept any peer.
 //
 // It should be used to create a new tls.Config before securing either an
 // incoming or outgoing connection.
-func (i *Identity) ConfigForPeer(remote peer.ID) (*tls.Config, <-chan ic.PubKey) {
-	keyCh := make(chan ic.PubKey, 1)
+func (i *Identity) ConfigForPeer(remote peer.ID, callback func(crypto.PubKey) error) *tls.Config {
 	// We need to check the peer ID in the VerifyPeerCertificate callback.
 	// The tls.Config it is also used for listening, and we might also have concurrent dials.
 	// Clone it so we can check for the specific peer ID we're dialing here.
@@ -73,8 +73,6 @@ func (i *Identity) ConfigForPeer(remote peer.ID) (*tls.Config, <-chan ic.PubKey)
 	// We're using InsecureSkipVerify, so the verifiedChains parameter will always be empty.
 	// We need to parse the certificates ourselves from the raw certs.
 	conf.VerifyPeerCertificate = func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
-		defer close(keyCh)
-
 		chain := make([]*x509.Certificate, len(rawCerts))
 		for i := 0; i < len(rawCerts); i++ {
 			cert, err := x509.ParseCertificate(rawCerts[i])
@@ -95,14 +93,16 @@ func (i *Identity) ConfigForPeer(remote peer.ID) (*tls.Config, <-chan ic.PubKey)
 			}
 			return fmt.Errorf("peer IDs don't match: expected %s, got %s", remote, peerID)
 		}
-		keyCh <- pubKey
+		if callback != nil {
+			return callback(pubKey)
+		}
 		return nil
 	}
-	return conf, keyCh
+	return conf
 }
 
 // PubKeyFromCertChain verifies the certificate chain and extract the remote's public key.
-func PubKeyFromCertChain(chain []*x509.Certificate) (ic.PubKey, error) {
+func PubKeyFromCertChain(chain []*x509.Certificate) (crypto.PubKey, error) {
 	if len(chain) != 1 {
 		return nil, errors.New("expected one certificates in the chain")
 	}
@@ -139,7 +139,7 @@ func PubKeyFromCertChain(chain []*x509.Certificate) (ic.PubKey, error) {
 	if _, err := asn1.Unmarshal(keyExt.Value, &sk); err != nil {
 		return nil, fmt.Errorf("unmarshalling signed certificate failed: %s", err)
 	}
-	pubKey, err := ic.UnmarshalPublicKey(sk.PubKey)
+	pubKey, err := crypto.UnmarshalPublicKey(sk.PubKey)
 	if err != nil {
 		return nil, fmt.Errorf("unmarshalling public key failed: %s", err)
 	}
@@ -157,13 +157,13 @@ func PubKeyFromCertChain(chain []*x509.Certificate) (ic.PubKey, error) {
 	return pubKey, nil
 }
 
-func keyToCertificate(sk ic.PrivKey) (*tls.Certificate, error) {
+func keyToCertificate(sk crypto.PrivKey) (*tls.Certificate, error) {
 	certKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return nil, err
 	}
 
-	keyBytes, err := ic.MarshalPublicKey(sk.GetPublic())
+	keyBytes, err := crypto.MarshalPublicKey(sk.GetPublic())
 	if err != nil {
 		return nil, err
 	}
