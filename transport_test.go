@@ -121,6 +121,19 @@ func TestHandshakeSucceeds(t *testing.T) {
 	})
 }
 
+// crypto/tls' cancellation logic works by spinning up a separate Go routine that watches the ctx.
+// If the ctx is canceled, it kills the handshake.
+// We need to make sure that the handshake doesn't complete before that Go routine picks up the cancellation.
+type delayedConn struct {
+	net.Conn
+	delay time.Duration
+}
+
+func (c *delayedConn) Read(b []byte) (int, error) {
+	time.Sleep(c.delay)
+	return c.Conn.Read(b)
+}
+
 func TestHandshakeConnectionCancelations(t *testing.T) {
 	_, clientKey := createPeer(t)
 	serverID, serverKey := createPeer(t)
@@ -152,7 +165,7 @@ func TestHandshakeConnectionCancelations(t *testing.T) {
 		go func() {
 			ctx, cancel := context.WithCancel(context.Background())
 			cancel()
-			_, err := serverTransport.SecureInbound(ctx, serverInsecureConn, "")
+			_, err := serverTransport.SecureInbound(ctx, &delayedConn{Conn: serverInsecureConn, delay: 5 * time.Millisecond}, "")
 			errChan <- err
 		}()
 		_, err = clientTransport.SecureOutbound(context.Background(), clientInsecureConn, serverID)
