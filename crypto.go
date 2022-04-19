@@ -11,6 +11,8 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"os"
+	"runtime/debug"
 	"time"
 
 	"golang.org/x/sys/cpu"
@@ -72,7 +74,15 @@ func (i *Identity) ConfigForPeer(remote peer.ID) (*tls.Config, <-chan ic.PubKey)
 	conf := i.config.Clone()
 	// We're using InsecureSkipVerify, so the verifiedChains parameter will always be empty.
 	// We need to parse the certificates ourselves from the raw certs.
-	conf.VerifyPeerCertificate = func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
+	conf.VerifyPeerCertificate = func(rawCerts [][]byte, _ [][]*x509.Certificate) (err error) {
+		defer func() {
+			if rerr := recover(); rerr != nil {
+				fmt.Fprintf(os.Stderr, "panic when processing peer certificate in TLS handshake: %s\n%s\n", rerr, debug.Stack())
+				err = fmt.Errorf("panic when processing peer certificate in TLS handshake: %s", rerr)
+
+			}
+		}()
+
 		defer close(keyCh)
 
 		chain := make([]*x509.Certificate, len(rawCerts))
