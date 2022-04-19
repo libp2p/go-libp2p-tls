@@ -4,7 +4,10 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"net"
+	"os"
+	"runtime/debug"
 
 	ci "github.com/libp2p/go-libp2p-core/crypto"
 	"github.com/libp2p/go-libp2p-core/peer"
@@ -70,7 +73,15 @@ func (t *Transport) SecureOutbound(ctx context.Context, insecure net.Conn, p pee
 	return cs, err
 }
 
-func (t *Transport) handshake(ctx context.Context, tlsConn *tls.Conn, keyCh <-chan ci.PubKey) (sec.SecureConn, error) {
+func (t *Transport) handshake(ctx context.Context, tlsConn *tls.Conn, keyCh <-chan ci.PubKey) (_sconn sec.SecureConn, err error) {
+	defer func() {
+		if rerr := recover(); rerr != nil {
+			fmt.Fprintf(os.Stderr, "panic in TLS handshake: %s\n%s\n", rerr, debug.Stack())
+			err = fmt.Errorf("panic in TLS handshake: %s", rerr)
+
+		}
+	}()
+
 	if err := tlsConn.HandshakeContext(ctx); err != nil {
 		return nil, err
 	}
